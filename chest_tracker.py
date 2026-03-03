@@ -152,11 +152,7 @@ class CaptureThread(QThread):
         
         self.status_update.emit("Parsing chest data...")
         
-        # The OCR extracts text without "From:" and "Source:" labels
-        # Pattern: [chest_name, player_name, source_info, ...]
-        # We need to identify the pattern based on known chest types
-        
-        chest_keywords = ['chest', 'crypt']  # Common words in chest names
+        chest_keywords = ['chest', 'crypt', 'vault']  # Common words in chest names
         
         i = 0
         while i < len(text_lines):
@@ -166,23 +162,55 @@ class CaptureThread(QThread):
             if any(keyword in line for keyword in chest_keywords):
                 chest_type = text_lines[i].strip()
                 
-                # Next line should be player name
-                player_name = text_lines[i + 1].strip() if i + 1 < len(text_lines) else None
+                # Next line should be player name (possibly with "From:" prefix)
+                raw_player = text_lines[i + 1].strip() if i + 1 < len(text_lines) else None
                 
-                # Line after that should be the source (e.g., "Level 15 Crypt")
-                source = text_lines[i + 2].strip() if i + 2 < len(text_lines) else None
+                # Line after that should be source (possibly with "Source:" prefix)
+                raw_source = text_lines[i + 2].strip() if i + 2 < len(text_lines) else None
                 
-                # Validate: player name shouldn't contain "level" or "crypt"
-                if player_name and source:
+                if raw_player and raw_source:
+                    # Clean up player name - remove "From:" if present
+                    player_name = raw_player
+                    if player_name.lower().startswith('from:'):
+                        player_name = player_name[5:].strip()
+                    elif player_name.lower().startswith('from '):
+                        player_name = player_name[5:].strip()
+                    
+                    # Clean up source - remove "Source:" if present
+                    source = raw_source
+                    if source.lower().startswith('source:'):
+                        source = source[7:].strip()
+                    elif source.lower().startswith('source '):
+                        source = source[7:].strip()
+                    
+                    # Validate player name
                     player_lower = player_name.lower()
-                    if 'level' not in player_lower and 'crypt' not in player_lower and 'chest' not in player_lower:
-                        chests.append({
-                            'player': player_name,
-                            'chest_type': f"{chest_type} - {source}"  # Combine for full info
-                        })
-                        self.status_update.emit(f"Found: {player_name} - {chest_type} ({source})")
-                        i += 3  # Move past this chest entry
+                    
+                    # Skip if contains chest/level/crypt/vault keywords
+                    if any(kw in player_lower for kw in ['level', 'crypt', 'chest', 'vault']):
+                        i += 1
                         continue
+                    
+                    # Skip if too short (< 2 characters)
+                    if len(player_name) < 2:
+                        self.status_update.emit(f"Skipped: '{player_name}' (too short)")
+                        i += 3
+                        continue
+                    
+                    # Skip if just punctuation
+                    if not any(c.isalnum() for c in player_name):
+                        self.status_update.emit(f"Skipped: '{player_name}' (no letters/numbers)")
+                        i += 3
+                        continue
+                    
+                    # Valid chest found
+                    chests.append({
+                        'player': player_name,
+                        'chest_type': f"{chest_type} - {source}"
+                    })
+                    self.status_update.emit(f"Found: {player_name} - {chest_type}")
+                    i += 3
+                    continue
             
             i += 1
         
@@ -615,8 +643,8 @@ class MainWindow(QMainWindow):
         
         # Instructions
         instructions = QLabel(
-            "Review today's captured chest data. You can see what was detected and check for errors.\n"
-            "Note: Corrections will be added in a future update."
+            "Review today's captured chest data. Double-click a player name to edit and correct it.\n"
+            "Suspicious names (too short or invalid) are highlighted in yellow."
         )
         instructions.setWordWrap(True)
         layout.addWidget(instructions)
@@ -626,14 +654,28 @@ class MainWindow(QMainWindow):
         review_layout = QVBoxLayout()
         
         self.review_table = QTableWidget()
-        self.review_table.setColumnCount(3)
-        self.review_table.setHorizontalHeaderLabels(['Player Name', 'Chest Type', 'Time'])
+        self.review_table.setColumnCount(4)
+        self.review_table.setHorizontalHeaderLabels(['ID', 'Player Name', 'Chest Type', 'Time'])
         self.review_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        
+        # Make player name column editable
+        self.review_table.itemChanged.connect(self.on_name_edited)
+        
         review_layout.addWidget(self.review_table)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
         
         refresh_review_btn = QPushButton("Refresh Data")
         refresh_review_btn.clicked.connect(self.refresh_review)
-        review_layout.addWidget(refresh_review_btn)
+        btn_layout.addWidget(refresh_review_btn)
+        
+        save_changes_btn = QPushButton("Save Changes to Database")
+        save_changes_btn.clicked.connect(self.save_name_corrections)
+        save_changes_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px;")
+        btn_layout.addWidget(save_changes_btn)
+        
+        review_layout.addLayout(btn_layout)
         
         review_group.setLayout(review_layout)
         layout.addWidget(review_group)
@@ -747,22 +789,112 @@ class MainWindow(QMainWindow):
     
     def refresh_review(self):
         """Refresh the review table with all captured chests"""
-        chests = self.db.get_all_chests(self.db.daily_db)
+        import sqlite3
         
-        self.review_table.setRowCount(len(chests))
+        conn = sqlite3.connect(self.db.daily_db)
+        cursor = conn.cursor()
         
-        for i, chest in enumerate(chests):
-            self.review_table.setItem(i, 0, QTableWidgetItem(chest['player_name']))
-            self.review_table.setItem(i, 1, QTableWidgetItem(chest['chest_type']))
+        cursor.execute('''
+            SELECT id, player_name, chest_type, timestamp 
+            FROM chests 
+            ORDER BY timestamp DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Disable signals while populating to avoid triggering itemChanged
+        self.review_table.blockSignals(True)
+        
+        self.review_table.setRowCount(len(rows))
+        
+        for i, row in enumerate(rows):
+            chest_id, player_name, chest_type, timestamp = row
             
-            # Format timestamp
+            # ID column (hidden but stored for updates)
+            id_item = QTableWidgetItem(str(chest_id))
+            id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.review_table.setItem(i, 0, id_item)
+            
+            # Player name column (editable)
+            name_item = QTableWidgetItem(player_name)
+            # Highlight suspicious names in yellow
+            if len(player_name) < 2 or not any(c.isalnum() for c in player_name):
+                name_item.setBackground(QColor(255, 255, 100))  # Yellow highlight
+            self.review_table.setItem(i, 1, name_item)
+            
+            # Chest type column (not editable)
+            type_item = QTableWidgetItem(chest_type)
+            type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.review_table.setItem(i, 2, type_item)
+            
+            # Time column (not editable)
             try:
-                dt = datetime.fromisoformat(chest['timestamp'])
+                dt = datetime.fromisoformat(timestamp)
                 time_str = dt.strftime("%H:%M:%S")
             except:
-                time_str = chest['timestamp']
+                time_str = timestamp
             
-            self.review_table.setItem(i, 2, QTableWidgetItem(time_str))
+            time_item = QTableWidgetItem(time_str)
+            time_item.setFlags(time_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.review_table.setItem(i, 3, time_item)
+        
+        # Re-enable signals
+        self.review_table.blockSignals(False)
+        
+        # Hide the ID column (but keep it for database updates)
+        self.review_table.setColumnHidden(0, True)
+    
+    def on_name_edited(self, item):
+        """Track when a player name is edited"""
+        # Only care about column 1 (player name)
+        if item.column() == 1:
+            # Remove yellow highlight when edited
+            item.setBackground(QColor(255, 255, 255))
+    
+    def save_name_corrections(self):
+        """Save all edited player names back to the database"""
+        import sqlite3
+        
+        try:
+            conn = sqlite3.connect(self.db.daily_db)
+            cursor = conn.cursor()
+            
+            updates = 0
+            for row in range(self.review_table.rowCount()):
+                chest_id = int(self.review_table.item(row, 0).text())
+                new_name = self.review_table.item(row, 1).text().strip()
+                
+                # Update database
+                cursor.execute('''
+                    UPDATE chests 
+                    SET player_name = ? 
+                    WHERE id = ?
+                ''', (new_name, chest_id))
+                updates += 1
+            
+            conn.commit()
+            conn.close()
+            
+            # Update summary tables to reflect name changes
+            self.db._update_summary(self.db.daily_db, None)
+            
+            # Refresh stats to reflect changes
+            self.refresh_stats()
+            
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Updated {updates} player name(s) in the database.\n\n"
+                "Changes have been saved to today's database.\n"
+                "Statistics have been recalculated."
+            )
+            
+            self.log(f"Saved {updates} name corrections to database")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save corrections:\n{str(e)}")
+            self.log(f"Error saving corrections: {str(e)}")
     
     def export_report(self, report_type):
         """Export HTML report"""

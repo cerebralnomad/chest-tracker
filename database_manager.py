@@ -116,35 +116,43 @@ class DatabaseManager:
         conn.commit()
         conn.close()
     
-    def _update_summary(self, db_path, player_name):
+    def _update_summary(self, db_path, player_name=None):
         """Update player summary in a database"""
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Get total chests for player
-        cursor.execute('''
-            SELECT COUNT(*), GROUP_CONCAT(chest_type)
-            FROM chests
-            WHERE player_name = ?
-        ''', (player_name,))
+        if player_name is None:
+            # Update all players (for bulk corrections)
+            cursor.execute('SELECT DISTINCT player_name FROM chests')
+            players = [row[0] for row in cursor.fetchall()]
+        else:
+            players = [player_name]
         
-        result = cursor.fetchone()
-        total_chests = result[0]
-        chest_types_str = result[1] if result[1] else ""
-        
-        # Count chest types
-        chest_types_dict = {}
-        if chest_types_str:
-            for chest_type in chest_types_str.split(','):
-                chest_types_dict[chest_type] = chest_types_dict.get(chest_type, 0) + 1
-        
-        chest_types_json = json.dumps(chest_types_dict)
-        
-        # Update or insert summary
-        cursor.execute('''
-            INSERT OR REPLACE INTO player_summary (player_name, total_chests, chest_types, last_updated)
-            VALUES (?, ?, ?, ?)
-        ''', (player_name, total_chests, chest_types_json, datetime.now().isoformat()))
+        for pname in players:
+            # Get total chests for player
+            cursor.execute('''
+                SELECT COUNT(*), GROUP_CONCAT(chest_type)
+                FROM chests
+                WHERE player_name = ?
+            ''', (pname,))
+            
+            result = cursor.fetchone()
+            total_chests = result[0]
+            chest_types_str = result[1] if result[1] else ""
+            
+            # Count chest types
+            chest_types_dict = {}
+            if chest_types_str:
+                for chest_type in chest_types_str.split(','):
+                    chest_types_dict[chest_type] = chest_types_dict.get(chest_type, 0) + 1
+            
+            chest_types_json = json.dumps(chest_types_dict)
+            
+            # Update or insert summary
+            cursor.execute('''
+                INSERT OR REPLACE INTO player_summary (player_name, total_chests, chest_types, last_updated)
+                VALUES (?, ?, ?, ?)
+            ''', (pname, total_chests, chest_types_json, datetime.now().isoformat()))
         
         conn.commit()
         conn.close()
