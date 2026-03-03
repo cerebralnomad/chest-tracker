@@ -2,6 +2,12 @@
 
 A Python application with PyQt6 GUI to track clan chest contributions in the Total Battle online game. Automatically extracts player names and chest types using OCR, maintains daily/weekly/monthly databases, and generates beautiful HTML reports for sharing with clan members.
 
+This program was developed for and tested on Linux only. Specifically Kubuntu 24.04, but it should run on most any Linux distribution.
+It should in theory run on Windows, as it is written in Python, but some changes may be required. 
+I offer no support whatsoever to running on Windows, as I do not have a Windows machine, nor do I have any experience with Windows
+beyond Windows 7.
+
+
 ## Features
 
 - 🎯 **Automated OCR Processing**: Captures screen region and extracts player names and chest types
