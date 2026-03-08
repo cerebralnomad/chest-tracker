@@ -1,0 +1,35 @@
+# User data - don't commit
+databases/
+html_reports/
+config.json
+*.db
+
+# Temporary files
+temp_ocr.png
+test_capture.png
+debug_preprocessed.png
+screenshots/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+chest_tracker_env/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -8,8 +8,9 @@ import sys
 import json
 import time
 import warnings
+import argparse
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import cv2
 
@@ -38,13 +39,52 @@ class CaptureThread(QThread):
     processing_complete = pyqtSignal(int)  # total chests processed
     error_occurred = pyqtSignal(str)
     
-    def __init__(self, coords, ocr_instance, db_manager):
+    def __init__(self, coords, ocr_instance, db_manager, save_screenshots=False):
         super().__init__()
         self.coords = coords
         self.ocr = ocr_instance
         self.db = db_manager
         self.running = False
         self.click_delay = 0.3  # 300ms default delay
+        self.save_screenshots = save_screenshots
+        self.screenshot_counter = 0
+        
+        # Create screenshots directory if saving is enabled
+        if self.save_screenshots:
+            self.screenshots_dir = Path("screenshots")
+            self.screenshots_dir.mkdir(exist_ok=True)
+            self._cleanup_old_screenshots()
+    
+    def _cleanup_old_screenshots(self):
+        """Delete screenshots older than 7 days"""
+        try:
+            cutoff_date = datetime.now() - timedelta(days=7)
+            deleted_count = 0
+            
+            for screenshot in self.screenshots_dir.glob("*.png"):
+                # Get file modification time
+                mtime = datetime.fromtimestamp(screenshot.stat().st_mtime)
+                
+                if mtime < cutoff_date:
+                    screenshot.unlink()
+                    deleted_count += 1
+            
+            if deleted_count > 0:
+                self.status_update.emit(f"Cleaned up {deleted_count} old screenshot(s)")
+        except Exception as e:
+            self.status_update.emit(f"Screenshot cleanup warning: {str(e)}")
+    
+    def _save_debug_screenshot(self, screenshot):
+        """Save screenshot for debugging"""
+        try:
+            self.screenshot_counter += 1
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"{timestamp}_chest_{self.screenshot_counter:03d}.png"
+            filepath = self.screenshots_dir / filename
+            screenshot.save(filepath)
+            self.status_update.emit(f"Saved: {filename}")
+        except Exception as e:
+            self.status_update.emit(f"Screenshot save error: {str(e)}")
         
     def run(self):
         """Main processing loop"""
@@ -57,6 +97,10 @@ class CaptureThread(QThread):
                 self.status_update.emit("Capturing screen region...")
                 x, y, width, height = self.coords
                 screenshot = pyautogui.screenshot(region=(x, y, width, height))
+                
+                # Save debug screenshot if enabled
+                if self.save_screenshots:
+                    self._save_debug_screenshot(screenshot)
                 
                 # Convert to numpy array
                 img_array = np.array(screenshot)
@@ -152,7 +196,7 @@ class CaptureThread(QThread):
         
         self.status_update.emit("Parsing chest data...")
         
-        chest_keywords = ['chest', 'crypt', 'vault']  # Common words in chest names
+        chest_keywords = ['chest', 'crypt', 'vault']
         
         i = 0
         while i < len(text_lines):
@@ -162,45 +206,73 @@ class CaptureThread(QThread):
             if any(keyword in line for keyword in chest_keywords):
                 chest_type = text_lines[i].strip()
                 
-                # Next line should be player name (possibly with "From:" prefix)
-                raw_player = text_lines[i + 1].strip() if i + 1 < len(text_lines) else None
+                # Look ahead up to 5 lines for From: and Source:
+                # BUT stop if we encounter another chest (boundary detection)
+                player_name = None
+                source = None
+                lines_to_check = min(i + 6, len(text_lines))
                 
-                # Line after that should be source (possibly with "Source:" prefix)
-                raw_source = text_lines[i + 2].strip() if i + 2 < len(text_lines) else None
+                for j in range(i + 1, lines_to_check):
+                    check_line = text_lines[j].strip()
+                    check_lower = check_line.lower()
+                    
+                    # BOUNDARY: Stop if we hit another chest keyword
+                    # This prevents grabbing data from the next chest
+                    if j > i + 1 and any(keyword in check_lower for keyword in chest_keywords):
+                        # Found another chest - stop here
+                        break
+                    
+                    # Skip "Clan" text from icon/UI
+                    if check_lower == 'clan':
+                        continue
+                    
+                    # Look for "From:" pattern
+                    if 'from:' in check_lower or check_lower.startswith('from '):
+                        if player_name is None:  # Only take the FIRST "From:" we find
+                            # Extract player name after "From:"
+                            if 'from:' in check_lower:
+                                player_name = check_line.split(':', 1)[1].strip()
+                            elif check_lower.startswith('from '):
+                                player_name = check_line[5:].strip()
+                    
+                    # Look for "Source:" or "Level" pattern
+                    elif 'source:' in check_lower or check_lower.startswith('source '):
+                        if source is None:  # Only take the FIRST "Source:" we find
+                            # Extract source after "Source:"
+                            if 'source:' in check_lower:
+                                source = check_line.split(':', 1)[1].strip()
+                            elif check_lower.startswith('source '):
+                                source = check_line[7:].strip()
+                    elif source is None and 'level' in check_lower and ('crypt' in check_lower or 'vault' in check_lower):
+                        # This is a source line without "Source:" prefix
+                        source = check_line
                 
-                if raw_player and raw_source:
-                    # Clean up player name - remove "From:" if present
-                    player_name = raw_player
-                    if player_name.lower().startswith('from:'):
-                        player_name = player_name[5:].strip()
-                    elif player_name.lower().startswith('from '):
-                        player_name = player_name[5:].strip()
-                    
-                    # Clean up source - remove "Source:" if present
-                    source = raw_source
-                    if source.lower().startswith('source:'):
-                        source = source[7:].strip()
-                    elif source.lower().startswith('source '):
-                        source = source[7:].strip()
-                    
-                    # Validate player name
+                # Validate we found both player and source
+                if player_name and source:
+                    # Additional validation
                     player_lower = player_name.lower()
                     
-                    # Skip if contains chest/level/crypt/vault keywords
-                    if any(kw in player_lower for kw in ['level', 'crypt', 'chest', 'vault']):
+                    # Skip if player name contains chest keywords
+                    if any(kw in player_lower for kw in ['level', 'crypt', 'chest', 'vault', 'source']):
                         i += 1
                         continue
                     
-                    # Skip if too short (< 2 characters)
+                    # Skip if too short
                     if len(player_name) < 2:
                         self.status_update.emit(f"Skipped: '{player_name}' (too short)")
-                        i += 3
+                        i += 1
                         continue
                     
                     # Skip if just punctuation
                     if not any(c.isalnum() for c in player_name):
                         self.status_update.emit(f"Skipped: '{player_name}' (no letters/numbers)")
-                        i += 3
+                        i += 1
+                        continue
+                    
+                    # Skip "Clan" as player name
+                    if player_lower == 'clan':
+                        self.status_update.emit(f"Skipped: '{player_name}' (UI element)")
+                        i += 1
                         continue
                     
                     # Valid chest found
@@ -209,7 +281,7 @@ class CaptureThread(QThread):
                         'chest_type': f"{chest_type} - {source}"
                     })
                     self.status_update.emit(f"Found: {player_name} - {chest_type}")
-                    i += 3
+                    i += 4  # Skip ahead (but not too far, to catch next chest)
                     continue
             
             i += 1
@@ -481,7 +553,7 @@ class PointsManager(QWidget):
 class MainWindow(QMainWindow):
     """Main application window"""
     
-    def __init__(self):
+    def __init__(self, save_screenshots=False):
         super().__init__()
         
         # Initialize components
@@ -489,8 +561,10 @@ class MainWindow(QMainWindow):
         self.db = DatabaseManager()
         self.ocr = None
         self.capture_thread = None
+        self.save_screenshots = save_screenshots
         
-        self.setWindowTitle("Total Battle - Clan Chest Tracker")
+        title_suffix = " [SCREENSHOT DEBUG MODE]" if save_screenshots else ""
+        self.setWindowTitle(f"Total Battle - Clan Chest Tracker{title_suffix}")
         self.setGeometry(100, 100, 900, 700)
         
         self.setup_ui()
@@ -719,7 +793,8 @@ class MainWindow(QMainWindow):
         self.capture_thread = CaptureThread(
             self.coord_setup.coords,
             self.ocr,
-            self.db
+            self.db,
+            self.save_screenshots
         )
         
         self.capture_thread.status_update.connect(self.log)
@@ -997,13 +1072,37 @@ class ConfigManager:
 
 def main():
     """Main application entry point"""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Total Battle Clan Chest Tracker',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  %(prog)s              Run normally
+  %(prog)s -s           Run with screenshot debugging enabled
+  %(prog)s --save-screenshots  Same as -s
+        '''
+    )
+    parser.add_argument(
+        '-s', '--save-screenshots',
+        action='store_true',
+        help='Save screenshots of each capture to screenshots/ folder (for debugging)'
+    )
+    
+    args = parser.parse_args()
+    
     app = QApplication(sys.argv)
     
     # Set application style
     app.setStyle('Fusion')
     
     # Create and show main window
-    window = MainWindow()
+    window = MainWindow(save_screenshots=args.save_screenshots)
+    
+    if args.save_screenshots:
+        print("📸 Screenshot debugging enabled - images will be saved to screenshots/ folder")
+        print("   Screenshots older than 7 days will be auto-deleted")
+    
     window.show()
     
     sys.exit(app.exec())

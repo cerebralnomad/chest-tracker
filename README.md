@@ -2,12 +2,6 @@
 
 A Python application with PyQt6 GUI to track clan chest contributions in the Total Battle online game. Automatically extracts player names and chest types using OCR, maintains daily/weekly/monthly databases, and generates beautiful HTML reports for sharing with clan members.
 
-This program was developed for and tested on Linux only. Specifically Kubuntu 24.04, but it should run on most any Linux distribution.
-It should in theory run on Windows, as it is written in Python, but some changes may be required. 
-I offer no support whatsoever to running on Windows, as I do not have a Windows machine, nor do I have any experience with Windows
-beyond Windows 7.
-
-
 ## Features
 
 - 🎯 **Automated OCR Processing**: Captures screen region and extracts player names and chest types
@@ -17,6 +11,7 @@ beyond Windows 7.
 - ⚙️ **Configurable Points**: Set custom point values for each chest type
 - 🌐 **Web-Ready Reports**: Self-contained HTML files ready for upload to your server
 - 🗑️ **Auto-Cleanup**: Databases older than 30 days are automatically deleted (HTML preserved)
+- 📸 **Screenshot Debugging**: Optional capture screenshots for OCR troubleshooting
 
 ## Requirements
 
@@ -81,6 +76,33 @@ pip install -r requirements.txt
    - Click "Save Point Values"
 
 ## Usage
+
+### Normal Mode
+
+```bash
+python3 chest_tracker.py
+# or
+./run.sh
+```
+
+### Screenshot Debugging Mode
+
+For troubleshooting OCR issues, enable screenshot saving:
+
+```bash
+python3 chest_tracker.py -s
+# or
+python3 chest_tracker.py --save-screenshots
+```
+
+This will:
+- Save each capture as a PNG before processing
+- Store screenshots in `screenshots/` folder
+- Use timestamp naming: `2026-03-02_22-15-33_chest_001.png`
+- Auto-delete screenshots older than 7 days
+- Show "SCREENSHOT DEBUG MODE" in window title
+
+**Performance impact**: ~1-2% slower (adds ~50-100ms per chest)
 
 ### Processing Chests
 
