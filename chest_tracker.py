@@ -152,6 +152,12 @@ class CaptureThread(QThread):
                 # Quick debug - only show count, not all lines
                 self.status_update.emit(f"OCR found {len(text_lines)} text lines")
                 
+                # Debug: Show the actual text lines found
+                if len(text_lines) > 0:
+                    self.status_update.emit("OCR Text Detected:")
+                    for idx, line in enumerate(text_lines):
+                        self.status_update.emit(f"  [{idx}] {line}")
+                
                 # Parse chest information
                 chest_data = self._parse_chest_data(text_lines)
                 
@@ -216,12 +222,6 @@ class CaptureThread(QThread):
                     check_line = text_lines[j].strip()
                     check_lower = check_line.lower()
                     
-                    # BOUNDARY: Stop if we hit another chest keyword
-                    # This prevents grabbing data from the next chest
-                    if j > i + 1 and any(keyword in check_lower for keyword in chest_keywords):
-                        # Found another chest - stop here
-                        break
-                    
                     # Skip "Clan" text from icon/UI
                     if check_lower == 'clan':
                         continue
@@ -246,6 +246,14 @@ class CaptureThread(QThread):
                     elif source is None and 'level' in check_lower and ('crypt' in check_lower or 'vault' in check_lower):
                         # This is a source line without "Source:" prefix
                         source = check_line
+                    
+                    # BOUNDARY: Stop if we hit another chest keyword
+                    # BUT only if it's NOT part of a From:/Source: line
+                    elif j > i + 1 and any(keyword in check_lower for keyword in chest_keywords):
+                        # Don't break if this line already matched From: or Source: above
+                        if 'from:' not in check_lower and 'source:' not in check_lower:
+                            # Found another chest - stop here
+                            break
                 
                 # Validate we found both player and source
                 if player_name and source:
@@ -254,6 +262,7 @@ class CaptureThread(QThread):
                     
                     # Skip if player name contains chest keywords
                     if any(kw in player_lower for kw in ['level', 'crypt', 'chest', 'vault', 'source']):
+                        self.status_update.emit(f"Skipped: '{player_name}' (contains keyword)")
                         i += 1
                         continue
                     
@@ -283,6 +292,12 @@ class CaptureThread(QThread):
                     self.status_update.emit(f"Found: {player_name} - {chest_type}")
                     i += 4  # Skip ahead (but not too far, to catch next chest)
                     continue
+                else:
+                    # Debug: Why did this chest fail?
+                    if not player_name:
+                        self.status_update.emit(f"Debug: No 'From:' found for '{chest_type}'")
+                    if not source:
+                        self.status_update.emit(f"Debug: No 'Source:' or 'Level' found for '{chest_type}'")
             
             i += 1
         
