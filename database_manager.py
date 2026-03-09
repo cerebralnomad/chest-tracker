@@ -31,18 +31,14 @@ class DatabaseManager:
     
     def _get_weekly_db(self):
         """Get the current weekly database path"""
-        # Week starts Monday 12am, ends Sunday 12pm
+        # Week runs Monday 12:00 AM (midnight) to Sunday 11:59 PM
+        # The week switches at Monday 12:00 AM (start of new week)
         now = datetime.now()
         
-        # If it's Sunday after noon, this is still previous week
-        if now.weekday() == 6 and now.hour >= 12:
-            # Use next Monday as week start
-            days_ahead = 1
-            week_start = now + timedelta(days=days_ahead)
-        else:
-            # Get the Monday of current week
-            days_since_monday = now.weekday()
-            week_start = now - timedelta(days=days_since_monday)
+        # Get the Monday of current week
+        # weekday() returns 0=Monday, 6=Sunday
+        days_since_monday = now.weekday()
+        week_start = now - timedelta(days=days_since_monday)
         
         week_str = week_start.strftime("%Y-W%U")
         return self.db_dir / f"weekly_{week_str}.db"

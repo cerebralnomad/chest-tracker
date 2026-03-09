@@ -123,7 +123,7 @@ This will:
 2. Click "Refresh Statistics" to see today's data
 3. Export reports:
    - **Daily Report**: Current day's statistics
-   - **Weekly Report**: Monday 12am - Sunday 12pm
+   - **Weekly Report**: Monday 12:00 AM - Sunday 11:59 PM
    - **Monthly Report**: Full calendar month
 
 ### HTML Reports
@@ -156,7 +156,7 @@ https://yoursubdomain.yourdomain.com/weekly_report_2024-W10.html
 
 ### Weekly Databases
 - Location: `databases/weekly_YYYY-WXX.db`
-- Period: Monday 12:00 AM to Sunday 12:00 PM
+- Period: Monday 12:00 AM to Sunday 11:59 PM
 
 ### Monthly Databases
 - Location: `databases/monthly_YYYY-MM.db`
