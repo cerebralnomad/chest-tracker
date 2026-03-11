@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QSpinBox, QGroupBox, QTextEdit, QTabWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QLineEdit,
-    QFormLayout, QScrollArea
+    QFormLayout, QScrollArea, QComboBox, QInputDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPalette, QColor
@@ -31,6 +31,7 @@ import pyautogui
 from paddleocr import PaddleOCR
 from database_manager import DatabaseManager
 from html_generator import HTMLGenerator
+from members_manager import MembersManager
 
 class CaptureThread(QThread):
     """Background thread for capturing and processing chests"""
@@ -39,7 +40,7 @@ class CaptureThread(QThread):
     processing_complete = pyqtSignal(int)  # total chests processed
     error_occurred = pyqtSignal(str)
     
-    def __init__(self, coords, ocr_instance, db_manager, save_screenshots=False):
+    def __init__(self, coords, ocr_instance, db_manager, save_screenshots=False, click_coords=None):
         super().__init__()
         self.coords = coords
         self.ocr = ocr_instance
@@ -48,6 +49,7 @@ class CaptureThread(QThread):
         self.click_delay = 0.3  # 300ms default delay
         self.save_screenshots = save_screenshots
         self.screenshot_counter = 0
+        self.click_coords = click_coords  # (click_x, click_y) tuple
         
         # Create screenshots directory if saving is enabled
         if self.save_screenshots:
@@ -178,12 +180,16 @@ class CaptureThread(QThread):
                 self.status_update.emit(f"Processed: {player_name} - {chest_type}")
                 
                 # Click the Open button for the FIRST chest entry
-                # Using exact coordinates found via "Find Click Coordinates" tool
-                # These are absolute screen coordinates, not relative to capture area
-                click_x = 1351
-                click_y = 523
+                # Use coordinates from profile if available, otherwise fallback to default
+                if self.click_coords:
+                    click_x, click_y = self.click_coords
+                    self.status_update.emit(f"Clicking Open at ({click_x}, {click_y}) [from profile]...")
+                else:
+                    # Fallback to default coordinates (legacy)
+                    click_x = 1351
+                    click_y = 523
+                    self.status_update.emit(f"Clicking Open at ({click_x}, {click_y}) [default - set click coords in profile!]...")
                 
-                self.status_update.emit(f"Clicking Open at ({click_x}, {click_y})...")
                 pyautogui.click(click_x, click_y)
                 
                 # Wait for chest to open and UI to update (reduced from 1 second)
@@ -312,13 +318,43 @@ class CaptureThread(QThread):
 class CoordinateSetup(QWidget):
     """Widget for setting up capture coordinates"""
     
-    def __init__(self, parent=None):
+    def __init__(self, config_manager, parent=None):
         super().__init__(parent)
+        self.config = config_manager
         self.coords = None
         self.setup_ui()
+        self.load_active_profile()
         
     def setup_ui(self):
         layout = QVBoxLayout()
+        
+        # Profile selection
+        profile_group = QGroupBox("Coordinate Profile")
+        profile_layout = QVBoxLayout()
+        
+        profile_select_layout = QHBoxLayout()
+        profile_select_layout.addWidget(QLabel("Select Profile:"))
+        
+        self.profile_combo = QComboBox()
+        self.profile_combo.currentTextChanged.connect(self.on_profile_changed)
+        profile_select_layout.addWidget(self.profile_combo)
+        
+        profile_layout.addLayout(profile_select_layout)
+        
+        # Profile management buttons
+        profile_btn_layout = QHBoxLayout()
+        
+        new_profile_btn = QPushButton("New Profile")
+        new_profile_btn.clicked.connect(self.create_new_profile)
+        profile_btn_layout.addWidget(new_profile_btn)
+        
+        self.delete_profile_btn = QPushButton("Delete Profile")
+        self.delete_profile_btn.clicked.connect(self.delete_current_profile)
+        profile_btn_layout.addWidget(self.delete_profile_btn)
+        
+        profile_layout.addLayout(profile_btn_layout)
+        profile_group.setLayout(profile_layout)
+        layout.addWidget(profile_group)
         
         # Instructions
         instructions = QLabel(
@@ -374,8 +410,9 @@ class CoordinateSetup(QWidget):
         layout.addWidget(self.click_coords_label)
         
         # Save button
-        save_btn = QPushButton("Save Coordinates")
-        save_btn.clicked.connect(self.save_coordinates)
+        save_btn = QPushButton("Save Profile")
+        save_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px;")
+        save_btn.clicked.connect(self.save_current_profile)
         layout.addWidget(save_btn)
         
         layout.addStretch()
@@ -438,30 +475,204 @@ class CoordinateSetup(QWidget):
             else:
                 x, y = pyautogui.position()
             
+            # Save to current profile
+            profile_name = self.profile_combo.currentText()
+            coords = self.config.get_profile(profile_name)
+            if coords is None:
+                coords = {}
+            
+            coords['click_x'] = x
+            coords['click_y'] = y
+            self.config.save_profile(profile_name, coords)
+            
             self.click_coords_label.setText(
-                f"Open button coordinates: X={x}, Y={y}\n"
-                f"Use these values in the code or tell the developer."
+                f"✓ Open button: X={x}, Y={y}\n"
+                f"Saved to profile '{profile_name}'"
             )
             QMessageBox.information(
                 self,
-                "Coordinates Found",
-                f"Open button is at:\nX: {x}\nY: {y}\n\n"
-                f"Your capture area starts at X={self.x_spin.value()}, Y={self.y_spin.value()}"
+                "Coordinates Saved",
+                f"Open button coordinates saved to profile '{profile_name}':\n"
+                f"X: {x}\nY: {y}\n\n"
+                f"Capture area starts at X={self.x_spin.value()}, Y={self.y_spin.value()}"
             )
     
-    def save_coordinates(self):
-        """Save coordinates to config"""
-        self.coords = (
-            self.x_spin.value(),
-            self.y_spin.value(),
-            self.width_spin.value(),
-            self.height_spin.value()
+    
+    def refresh_profile_list(self):
+        """Refresh the profile dropdown list"""
+        current = self.profile_combo.currentText()
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        
+        profiles = self.config.get_all_profiles()
+        self.profile_combo.addItems(profiles)
+        
+        # Restore selection or set to active profile
+        active_profile = self.config.get_active_profile()
+        index = self.profile_combo.findText(active_profile)
+        if index >= 0:
+            self.profile_combo.setCurrentIndex(index)
+        
+        self.profile_combo.blockSignals(False)
+        
+        # Enable/disable delete button
+        self.delete_profile_btn.setEnabled(len(profiles) > 1)
+    
+    def load_active_profile(self):
+        """Load the active profile into UI"""
+        self.refresh_profile_list()
+        active_profile = self.config.get_active_profile()
+        coords = self.config.get_profile(active_profile)
+        if coords:
+            self.load_coordinates(coords)
+            # Update click coordinates label if present
+            if 'click_x' in coords and 'click_y' in coords:
+                self.click_coords_label.setText(
+                    f"✓ Open button: X={coords['click_x']}, Y={coords['click_y']}\n"
+                    f"(Loaded from profile '{active_profile}')"
+                )
+            else:
+                self.click_coords_label.setText("No click coordinates saved for this profile yet")
+    
+    def on_profile_changed(self, profile_name):
+        """Handle profile selection change"""
+        if not profile_name:
+            return
+        
+        # Set as active profile
+        self.config.set_active_profile(profile_name)
+        
+        # Load coordinates
+        coords = self.config.get_profile(profile_name)
+        if coords:
+            self.load_coordinates(coords)
+            # Update click coordinates label
+            if 'click_x' in coords and 'click_y' in coords:
+                self.click_coords_label.setText(
+                    f"✓ Open button: X={coords['click_x']}, Y={coords['click_y']}\n"
+                    f"(Loaded from profile '{profile_name}')"
+                )
+            else:
+                self.click_coords_label.setText("No click coordinates saved for this profile yet")
+    
+    def create_new_profile(self):
+        """Create a new coordinate profile"""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        name, ok = QInputDialog.getText(
+            self,
+            "New Profile",
+            "Enter profile name:\n(e.g., 'Desktop PC - 1920x1080' or 'Laptop')"
         )
-        QMessageBox.information(self, "Success", "Coordinates saved!")
+        
+        if ok and name:
+            name = name.strip()
+            if not name:
+                QMessageBox.warning(self, "Invalid Name", "Profile name cannot be empty.")
+                return
+            
+            if self.config.profile_exists(name):
+                QMessageBox.warning(self, "Profile Exists", f"Profile '{name}' already exists.")
+                return
+            
+            # Save current coordinates to new profile
+            # Include click coordinates if they exist in the current profile
+            coords = {
+                'x': self.x_spin.value(),
+                'y': self.y_spin.value(),
+                'width': self.width_spin.value(),
+                'height': self.height_spin.value()
+            }
+            
+            # Copy click coordinates from current profile if they exist
+            current_profile = self.config.get_active_profile()
+            current_coords = self.config.get_profile(current_profile)
+            if current_coords and 'click_x' in current_coords and 'click_y' in current_coords:
+                coords['click_x'] = current_coords['click_x']
+                coords['click_y'] = current_coords['click_y']
+            
+            self.config.save_profile(name, coords)
+            self.config.set_active_profile(name)
+            self.refresh_profile_list()
+            
+            message = f"Profile '{name}' created and activated."
+            if 'click_x' in coords:
+                message += f"\n\nClick coordinates copied from previous profile."
+            else:
+                message += f"\n\nReminder: Use 'Find Click Coordinates' to set the Open button position."
+            
+            QMessageBox.information(
+                self,
+                "Profile Created",
+                message
+            )
+    
+    def delete_current_profile(self):
+        """Delete the currently selected profile"""
+        profile_name = self.profile_combo.currentText()
+        
+        if len(self.config.get_all_profiles()) <= 1:
+            QMessageBox.warning(
+                self,
+                "Cannot Delete",
+                "Cannot delete the last profile. Create another profile first."
+            )
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Are you sure you want to delete profile '{profile_name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.config.delete_profile(profile_name)
+            self.load_active_profile()
+            QMessageBox.information(self, "Deleted", f"Profile '{profile_name}' deleted.")
+    
+    def save_current_profile(self):
+        """Save current coordinates to the active profile"""
+        profile_name = self.profile_combo.currentText()
+        
+        # Get existing profile to preserve click coordinates
+        existing_coords = self.config.get_profile(profile_name)
+        
+        coords = {
+            'x': self.x_spin.value(),
+            'y': self.y_spin.value(),
+            'width': self.width_spin.value(),
+            'height': self.height_spin.value()
+        }
+        
+        # Preserve click coordinates if they exist
+        if existing_coords and 'click_x' in existing_coords and 'click_y' in existing_coords:
+            coords['click_x'] = existing_coords['click_x']
+            coords['click_y'] = existing_coords['click_y']
+        
+        self.config.save_profile(profile_name, coords)
+        self.coords = (coords['x'], coords['y'], coords['width'], coords['height'])
+        
+        QMessageBox.information(
+            self,
+            "Profile Saved",
+            f"Coordinates saved to profile '{profile_name}'!"
+        )
+    
+    def save_coordinates(self):
+        """Legacy method for compatibility - redirects to save_current_profile"""
+        self.save_current_profile()
     
     def load_coordinates(self, coords):
-        """Load coordinates from config"""
-        if coords:
+        """Load coordinates from dict or tuple into UI"""
+        if isinstance(coords, dict):
+            self.x_spin.setValue(coords.get('x', 0))
+            self.y_spin.setValue(coords.get('y', 0))
+            self.width_spin.setValue(coords.get('width', 700))
+            self.height_spin.setValue(coords.get('height', 400))
+            self.coords = (coords['x'], coords['y'], coords['width'], coords['height'])
+        elif coords:
+            # Tuple format (legacy)
             self.x_spin.setValue(coords[0])
             self.y_spin.setValue(coords[1])
             self.width_spin.setValue(coords[2])
@@ -574,6 +785,7 @@ class MainWindow(QMainWindow):
         # Initialize components
         self.config = ConfigManager()
         self.db = DatabaseManager()
+        self.members = MembersManager()
         self.ocr = None
         self.capture_thread = None
         self.save_screenshots = save_screenshots
@@ -612,7 +824,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(capture_tab, "Capture")
         
         # Setup tab
-        self.coord_setup = CoordinateSetup()
+        self.coord_setup = CoordinateSetup(self.config)
         tabs.addTab(self.coord_setup, "Coordinates")
         
         # Points tab
@@ -627,6 +839,10 @@ class MainWindow(QMainWindow):
         review_tab = self.create_review_tab()
         tabs.addTab(review_tab, "Review Data")
         
+        # Members tab
+        members_tab = self.create_members_tab()
+        tabs.addTab(members_tab, "Members")
+        
         layout.addWidget(tabs)
         
         # Status bar
@@ -639,6 +855,17 @@ class MainWindow(QMainWindow):
         """Create the capture control tab"""
         widget = QWidget()
         layout = QVBoxLayout()
+        
+        # Active profile display
+        profile_info = QGroupBox("Active Profile")
+        profile_info_layout = QHBoxLayout()
+        profile_info_layout.addWidget(QLabel("Using Profile:"))
+        self.active_profile_label = QLabel()
+        self.active_profile_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        profile_info_layout.addWidget(self.active_profile_label)
+        profile_info_layout.addStretch()
+        profile_info.setLayout(profile_info_layout)
+        layout.addWidget(profile_info)
         
         # Control buttons
         btn_layout = QHBoxLayout()
@@ -772,6 +999,75 @@ class MainWindow(QMainWindow):
         widget.setLayout(layout)
         return widget
     
+    def create_members_tab(self):
+        """Create the members management tab"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # Instructions
+        instructions = QLabel(
+            "Manage your clan member list. Members are automatically added when detected by OCR,\n"
+            "or you can add them manually. The member list is used to generate leadership reports."
+        )
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+        
+        # Add member section
+        add_group = QGroupBox("Add Member")
+        add_layout = QHBoxLayout()
+        
+        add_layout.addWidget(QLabel("Member Name:"))
+        self.member_name_input = QLineEdit()
+        self.member_name_input.setPlaceholderText("Enter player name...")
+        self.member_name_input.returnPressed.connect(self.add_member)
+        add_layout.addWidget(self.member_name_input)
+        
+        add_member_btn = QPushButton("Add Member")
+        add_member_btn.clicked.connect(self.add_member)
+        add_member_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px;")
+        add_layout.addWidget(add_member_btn)
+        
+        add_group.setLayout(add_layout)
+        layout.addWidget(add_group)
+        
+        # Member list section
+        list_group = QGroupBox("Clan Members")
+        list_layout = QVBoxLayout()
+        
+        self.members_table = QTableWidget()
+        self.members_table.setColumnCount(3)
+        self.members_table.setHorizontalHeaderLabels(['Member Name', 'Added', 'Source'])
+        self.members_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.members_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.members_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.members_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        list_layout.addWidget(self.members_table)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        
+        refresh_btn = QPushButton("Refresh List")
+        refresh_btn.clicked.connect(self.refresh_members)
+        btn_layout.addWidget(refresh_btn)
+        
+        sync_btn = QPushButton("Sync from Databases")
+        sync_btn.clicked.connect(self.sync_members)
+        sync_btn.setStyleSheet("background-color: #2196F3; color: white; padding: 8px;")
+        btn_layout.addWidget(sync_btn)
+        
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.clicked.connect(self.remove_member)
+        remove_btn.setStyleSheet("background-color: #f44336; color: white; padding: 8px;")
+        btn_layout.addWidget(remove_btn)
+        
+        list_layout.addLayout(btn_layout)
+        
+        list_group.setLayout(list_layout)
+        layout.addWidget(list_group)
+        
+        widget.setLayout(layout)
+        return widget
+    
     def init_ocr(self):
         """Initialize OCR model"""
         self.log("Initializing OCR model...")
@@ -795,6 +1091,10 @@ class MainWindow(QMainWindow):
     
     def start_capture(self):
         """Start the capture process"""
+        # Update active profile display
+        active_profile = self.config.get_active_profile()
+        self.active_profile_label.setText(active_profile)
+        
         # Validate setup
         if not self.coord_setup.coords:
             QMessageBox.warning(self, "Warning", "Please set up coordinates first!")
@@ -804,12 +1104,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "OCR model not ready yet!")
             return
         
+        # Get click coordinates from active profile
+        profile_coords = self.config.get_active_coordinates()
+        click_coords = None
+        if profile_coords and 'click_x' in profile_coords and 'click_y' in profile_coords:
+            click_coords = (profile_coords['click_x'], profile_coords['click_y'])
+        
         # Start capture thread
         self.capture_thread = CaptureThread(
             self.coord_setup.coords,
             self.ocr,
             self.db,
-            self.save_screenshots
+            self.save_screenshots,
+            click_coords
         )
         
         self.capture_thread.status_update.connect(self.log)
@@ -986,6 +1293,96 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to save corrections:\n{str(e)}")
             self.log(f"Error saving corrections: {str(e)}")
     
+    def add_member(self):
+        """Add a new member to the list"""
+        name = self.member_name_input.text().strip()
+        
+        if not name:
+            QMessageBox.warning(self, "Invalid Name", "Please enter a member name.")
+            return
+        
+        if self.members.add_member(name, added_by='manual'):
+            QMessageBox.information(self, "Success", f"Added member: {name}")
+            self.member_name_input.clear()
+            self.refresh_members()
+            self.log(f"Added member: {name}")
+        else:
+            QMessageBox.warning(self, "Already Exists", f"Member '{name}' already exists in the list.")
+    
+    def remove_member(self):
+        """Remove selected member from the list"""
+        selected_rows = self.members_table.selectionModel().selectedRows()
+        
+        if not selected_rows:
+            QMessageBox.warning(self, "No Selection", "Please select a member to remove.")
+            return
+        
+        row = selected_rows[0].row()
+        member_name = self.members_table.item(row, 0).text()
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirm Remove",
+            f"Are you sure you want to remove '{member_name}' from the member list?\n\n"
+            f"This will not delete their chest records.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.members.remove_member(member_name):
+                QMessageBox.information(self, "Removed", f"Removed member: {member_name}")
+                self.refresh_members()
+                self.log(f"Removed member: {member_name}")
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to remove member: {member_name}")
+    
+    def refresh_members(self):
+        """Refresh the members table"""
+        members = self.members.get_all_members()
+        
+        self.members_table.setRowCount(len(members))
+        
+        for i, member in enumerate(members):
+            # Member name
+            self.members_table.setItem(i, 0, QTableWidgetItem(member['name']))
+            
+            # Date added
+            try:
+                dt = datetime.fromisoformat(member['date_added'])
+                date_str = dt.strftime("%Y-%m-%d")
+            except:
+                date_str = member['date_added']
+            self.members_table.setItem(i, 1, QTableWidgetItem(date_str))
+            
+            # Source (manual or auto)
+            source = "Manual" if member['added_by'] == 'manual' else "Auto (OCR)"
+            self.members_table.setItem(i, 2, QTableWidgetItem(source))
+    
+    def sync_members(self):
+        """Sync member list with chest databases"""
+        new_members = self.members.sync_with_databases(
+            self.db.daily_db,
+            self.db.weekly_db,
+            self.db.monthly_db
+        )
+        
+        if new_members:
+            QMessageBox.information(
+                self,
+                "Sync Complete",
+                f"Added {len(new_members)} new member(s) from databases:\n" +
+                "\n".join(f"• {name}" for name in new_members[:10]) +
+                (f"\n... and {len(new_members) - 10} more" if len(new_members) > 10 else "")
+            )
+            self.refresh_members()
+            self.log(f"Synced {len(new_members)} new members from databases")
+        else:
+            QMessageBox.information(
+                self,
+                "Sync Complete",
+                "Member list is already up to date."
+            )
+    
     def export_report(self, report_type):
         """Export HTML report"""
         self.log(f"Generating {report_type} report...")
@@ -1013,15 +1410,22 @@ class MainWindow(QMainWindow):
     
     def load_config(self):
         """Load configuration"""
-        coords = self.config.get('coordinates')
-        if coords:
-            self.coord_setup.load_coordinates(coords)
+        # Profile loading is now handled in CoordinateSetup.__init__()
+        # via load_active_profile() - no action needed here
+        pass
     
     def closeEvent(self, event):
         """Handle window close"""
-        # Save coordinates
+        # Save current coordinates to active profile
         if self.coord_setup.coords:
-            self.config.set('coordinates', self.coord_setup.coords)
+            active_profile = self.config.get_active_profile()
+            coords_dict = {
+                'x': self.coord_setup.coords[0],
+                'y': self.coord_setup.coords[1],
+                'width': self.coord_setup.coords[2],
+                'height': self.coord_setup.coords[3]
+            }
+            self.config.save_profile(active_profile, coords_dict)
         
         # Stop capture if running
         if self.capture_thread and self.capture_thread.isRunning():
@@ -1036,6 +1440,7 @@ class MainWindow(QMainWindow):
             generator.generate_weekly_report()
             generator.generate_monthly_report()
             generator.generate_index()
+            generator.generate_members_report(self.members)
             generator.cleanup_old_reports()
             self.log("HTML reports updated successfully")
         except Exception as e:
@@ -1083,6 +1488,69 @@ class ConfigManager:
         """Get points for a chest type"""
         points = self.config.get('points', {})
         return points.get(chest_type, 10)  # Default 10 points
+    
+    # Profile Management Methods
+    def ensure_profiles_structure(self):
+        """Ensure profiles structure exists in config"""
+        if 'profiles' not in self.config:
+            self.config['profiles'] = {}
+        if 'active_profile' not in self.config:
+            self.config['active_profile'] = 'Default'
+        
+        # Migrate old coordinates format to profiles
+        if 'coordinates' in self.config and 'Default' not in self.config['profiles']:
+            self.config['profiles']['Default'] = self.config['coordinates']
+            del self.config['coordinates']
+            self.save()
+    
+    def get_profile(self, profile_name):
+        """Get coordinates for a specific profile"""
+        self.ensure_profiles_structure()
+        return self.config['profiles'].get(profile_name)
+    
+    def get_active_profile(self):
+        """Get the currently active profile name"""
+        self.ensure_profiles_structure()
+        return self.config.get('active_profile', 'Default')
+    
+    def get_active_coordinates(self):
+        """Get coordinates for the active profile"""
+        profile_name = self.get_active_profile()
+        return self.get_profile(profile_name)
+    
+    def set_active_profile(self, profile_name):
+        """Set the active profile"""
+        self.ensure_profiles_structure()
+        self.config['active_profile'] = profile_name
+        self.save()
+    
+    def save_profile(self, profile_name, coordinates):
+        """Save coordinates to a profile"""
+        self.ensure_profiles_structure()
+        self.config['profiles'][profile_name] = coordinates
+        self.save()
+    
+    def delete_profile(self, profile_name):
+        """Delete a profile"""
+        self.ensure_profiles_structure()
+        if profile_name in self.config['profiles']:
+            del self.config['profiles'][profile_name]
+            # If we deleted the active profile, switch to another one
+            if self.get_active_profile() == profile_name:
+                remaining = list(self.config['profiles'].keys())
+                self.config['active_profile'] = remaining[0] if remaining else 'Default'
+            self.save()
+    
+    def get_all_profiles(self):
+        """Get list of all profile names"""
+        self.ensure_profiles_structure()
+        profiles = list(self.config.get('profiles', {}).keys())
+        return profiles if profiles else ['Default']
+    
+    def profile_exists(self, profile_name):
+        """Check if a profile exists"""
+        self.ensure_profiles_structure()
+        return profile_name in self.config.get('profiles', {})
 
 
 def main():
