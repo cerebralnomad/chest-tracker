@@ -214,6 +214,143 @@ class HTMLGenerator:
         
         return str(filepath)
     
+    def generate_members_report(self, members_manager):
+        """Generate members-only leadership report (not linked from index)"""
+        # Get member stats
+        point_values = self.config.get('points', {})
+        member_stats = members_manager.get_all_member_stats(
+            self.db.daily_db,
+            self.db.weekly_db,
+            self.db.monthly_db,
+            point_values
+        )
+        
+        # Generate HTML
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>[ACE] Clan Members Report - Leadership Only</title>
+    <style>
+        {self._get_css()}
+        .members-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            overflow: hidden;
+        }}
+        .members-table th {{
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffd700;
+            padding: 15px;
+            text-align: left;
+            font-weight: 700;
+            border-bottom: 2px solid #ffd700;
+        }}
+        .members-table td {{
+            padding: 12px 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            color: #e4e4e4;
+        }}
+        .members-table tr:hover {{
+            background: rgba(255,215,0,0.1);
+        }}
+        .members-table tr:nth-child(even) {{
+            background: rgba(0,0,0,0.2);
+        }}
+        .rank-cell {{
+            font-weight: 700;
+            color: #ffd700;
+            text-align: center;
+        }}
+        .rank-1 {{ color: #FFD700; font-size: 1.2em; }}
+        .rank-2 {{ color: #C0C0C0; font-size: 1.1em; }}
+        .rank-3 {{ color: #CD7F32; font-size: 1.1em; }}
+        .points-cell {{
+            font-weight: 700;
+            color: #4CAF50;
+        }}
+    </style>
+</head>
+<body>
+    <div class="background-pattern"></div>
+    
+    <div class="container">
+        <header class="header">
+            <div class="title-section">
+                <h1 class="main-title">⚔️ TOTAL BATTLE</h1>
+                <h2 class="sub-title">[ACE] Clan Members Report</h2>
+            </div>
+            <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        </header>
+
+        <div class="stats-overview">
+            <div class="stat-card">
+                <div class="stat-value">{len(member_stats)}</div>
+                <div class="stat-label">Total Members</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{sum(1 for m in member_stats if m['daily_chests'] > 0)}</div>
+                <div class="stat-label">Active Today</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{sum(1 for m in member_stats if m['weekly_chests'] > 0)}</div>
+                <div class="stat-label">Active This Week</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{sum(m['monthly_points'] for m in member_stats):,}</div>
+                <div class="stat-label">Total Points (Month)</div>
+            </div>
+        </div>
+
+        <table class="members-table">
+            <thead>
+                <tr>
+                    <th style="width: 60px;">Rank</th>
+                    <th>Member Name</th>
+                    <th style="width: 100px; text-align: center;">Today</th>
+                    <th style="width: 120px; text-align: center;">This Week</th>
+                    <th style="width: 120px; text-align: center;">This Month</th>
+                    <th style="width: 120px; text-align: center;">Total Points</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+        
+        # Add member rows
+        for rank, member in enumerate(member_stats, 1):
+            rank_class = f"rank-{rank}" if rank <= 3 else ""
+            html += f"""
+                <tr>
+                    <td class="rank-cell {rank_class}">#{rank}</td>
+                    <td>{member['name']}</td>
+                    <td style="text-align: center;">{member['daily_chests']}</td>
+                    <td style="text-align: center;">{member['weekly_chests']}</td>
+                    <td style="text-align: center;">{member['monthly_chests']}</td>
+                    <td class="points-cell" style="text-align: center;">{member['total_points']:,}</td>
+                </tr>
+"""
+        
+        html += """
+            </tbody>
+        </table>
+
+        <footer class="footer">
+            <p>[ACE] Clan Members Report • For Leadership Use Only</p>
+        </footer>
+    </div>
+</body>
+</html>"""
+        
+        filepath = self.output_dir / "members_report.html"
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(html)
+        
+        return str(filepath)
+    
     def cleanup_old_reports(self):
         """Delete HTML reports older than 30 days"""
         cutoff_date = datetime.now() - timedelta(days=30)
