@@ -12,6 +12,8 @@ A Python application with PyQt6 GUI to track clan chest contributions in the Tot
 - 🌐 **Web-Ready Reports**: Self-contained HTML files ready for upload to your server
 - 🗑️ **Auto-Cleanup**: Databases older than 30 days are automatically deleted (HTML preserved)
 - 📸 **Screenshot Debugging**: Optional capture screenshots for OCR troubleshooting
+- 💾 **Coordinate Profiles**: Save multiple screen configurations for different computers
+- 👥 **Member Management**: Track all clan members with leadership-only detailed reports
 
 ## Requirements
 
@@ -60,20 +62,51 @@ pip install -r requirements.txt
    python3 chest_tracker.py
    ```
 
-2. **Set up capture coordinates**:
+2. **Set up coordinate profile**:
    - Go to the "Coordinates" tab
+   - The "Default" profile is created automatically
    - Open Total Battle and navigate to the clan chest screen
    - Use a screenshot tool to find the coordinates of the chest list area
    - Enter the X, Y position of the top-left corner
    - Enter the width and height of the capture area
    - Click "Test Capture" to verify
-   - Click "Save Coordinates"
+   - Click "Find Click Coordinates" and hover over the "Open" button, press SPACE
+   - Click "Save Profile"
 
 3. **Configure point values**:
    - Go to the "Point Values" tab
    - Set points for each chest type
    - Add new chest types if needed
    - Click "Save Point Values"
+
+4. **Set up member list** (optional):
+   - Go to the "Members" tab
+   - Click "Sync from Databases" to import anyone already tracked
+   - Manually add any members who haven't contributed yet
+   - Member list is used for leadership reports
+
+### Multiple Computer Setup (Coordinate Profiles)
+
+If you use the tracker on multiple computers with different screen resolutions:
+
+1. **On first computer**:
+   - Complete setup above with "Default" profile
+   - Click "New Profile" and name it (e.g., "Desktop PC - 1920x1080")
+   - Enter coordinates for this screen
+   - Find and save click coordinates
+   - Click "Save Profile"
+
+2. **On second computer** (after Syncthing syncs config.json):
+   - Profile from first computer will be available
+   - Click "New Profile" and create one for this computer (e.g., "Laptop - 1366x768")
+   - Enter different coordinates for this screen resolution
+   - Find and save click coordinates specific to this screen
+   - Click "Save Profile"
+
+3. **Switching profiles**:
+   - Select profile from dropdown on either Coordinates or Capture tab
+   - Profile loads automatically with both capture area and click coordinates
+   - All profiles sync via Syncthing
 
 ## Usage
 
@@ -126,9 +159,46 @@ This will:
    - **Weekly Report**: Monday 12:00 AM - Sunday 11:59 PM
    - **Monthly Report**: Full calendar month
 
+### Managing Members
+
+The Members tab allows you to maintain a master list of all clan members:
+
+1. **Auto-sync from databases**:
+   - Click "Sync from Databases"
+   - Automatically adds anyone who has contributed chests
+   - Shows count of new members found
+
+2. **Manual additions**:
+   - Enter member name in text box
+   - Click "Add Member"
+   - Useful for new members who haven't contributed yet
+
+3. **Remove members**:
+   - Select member from list
+   - Click "Remove Selected"
+   - Note: This only removes from member list, not chest history
+
+4. **Member sources**:
+   - "Auto (OCR)": Added automatically from chest processing
+   - "Manual": Added manually by clan leadership
+
 ### HTML Reports
 
-Generated reports are saved in the `html_reports/` directory. These files are:
+Generated reports are saved in the `html_reports/` directory:
+
+**Public Reports** (linked from index.html):
+- **index.html**: Main dashboard with quick stats and links
+- **daily_report_YYYY-MM-DD.html**: Today's detailed statistics
+- **weekly_report_YYYY-WXX.html**: This week's statistics
+- **monthly_report_YYYY-MM.html**: This month's statistics
+
+**Leadership Report** (not linked from index):
+- **members_report.html**: Complete member roster with daily/weekly/monthly stats
+  - Only for clan leadership
+  - Access directly via URL (not linked from public pages)
+  - Shows all members with their activity across all time periods
+
+All files are:
 - **Self-contained**: All CSS and JavaScript included
 - **No external dependencies**: Can be uploaded anywhere
 - **Responsive**: Works on desktop and mobile
@@ -162,8 +232,16 @@ https://yoursubdomain.yourdomain.com/weekly_report_2024-W10.html
 - Location: `databases/monthly_YYYY-MM.db`
 - Period: First to last day of month
 
+### Members Database
+- Location: `databases/members.db`
+- Contains master list of all clan members
+- Stores member names and when they were added (manual vs auto)
+- Statistics calculated on-demand from daily/weekly/monthly databases
+- Syncs across computers via Syncthing
+
 ### Auto-Cleanup
-- Databases older than 30 days are automatically deleted
+- Chest databases older than 30 days are automatically deleted
+- Members database is never deleted
 - HTML reports are never deleted (preserve forever)
 
 ## Troubleshooting
@@ -200,17 +278,22 @@ rm databases/daily_2024-03-15.db
 chest_tracker/
 ├── chest_tracker.py          # Main PyQt6 application
 ├── database_manager.py       # Database operations
+├── members_manager.py        # Member list management
 ├── html_generator.py         # HTML report generation
 ├── requirements.txt          # Python dependencies
 ├── config.json              # Application configuration (auto-created)
 ├── databases/               # SQLite databases (auto-created)
+│   ├── members.db           # Master member list
 │   ├── daily_*.db
 │   ├── weekly_*.db
 │   └── monthly_*.db
-└── html_reports/            # Generated HTML files (auto-created)
-    ├── daily_report_*.html
-    ├── weekly_report_*.html
-    └── monthly_report_*.html
+├── html_reports/            # Generated HTML files (auto-created)
+│   ├── index.html           # Main dashboard
+│   ├── daily_report_*.html
+│   ├── weekly_report_*.html
+│   ├── monthly_report_*.html
+│   └── members_report.html  # Leadership-only member stats
+└── screenshots/             # Debug screenshots (optional, with -s flag)
 ```
 
 ## Customization
