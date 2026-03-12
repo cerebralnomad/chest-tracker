@@ -68,7 +68,7 @@ pip install -r requirements.txt
    - Open Total Battle and navigate to the clan chest screen
    - Use a screenshot tool to find the coordinates of the chest list area
    - Enter the X, Y position of the top-left corner
-   - Enter the width and height of the capture area\n
+   - Enter the width and height of the capture area.  
      (Capture area should include two chests, and not be wide enough to include
       the open button or time remaining)
    - Click "Test Capture" to verify
