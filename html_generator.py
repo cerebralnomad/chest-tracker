@@ -197,6 +197,13 @@ class HTMLGenerator:
             <a href="monthly_report_{month_str}.html">View Monthly Report →</a>
         </div>
 
+        <div class="report-card">
+            <h3>📊 Chest Point Values</h3>
+            <p><strong>Reference:</strong> Point value for each chest type</p>
+            <p>See how different chests contribute to your score and understand the ranking system.</p>
+            <a href="point_values.html">View Point Values →</a>
+        </div>
+
         <div class="auto-refresh">
             <p>⟳ This page auto-refreshes every 5 minutes</p>
         </div>
@@ -215,7 +222,7 @@ class HTMLGenerator:
         return str(filepath)
     
     def generate_members_report(self, members_manager):
-        """Generate members-only leadership report (not linked from index)"""
+        """Generate all member reports with different sort orders"""
         # Get member stats
         point_values = self.config.get('points', {})
         member_stats = members_manager.get_all_member_stats(
@@ -225,13 +232,31 @@ class HTMLGenerator:
             point_values
         )
         
+        # Generate all 4 variants
+        self._generate_members_html(member_stats, 'total', 'members_report.html', 'Total Chests')
+        self._generate_members_html(member_stats, 'daily', 'members_report_today.html', 'Points Today')
+        self._generate_members_html(member_stats, 'weekly', 'members_report_weekly.html', 'Points This Week')
+        self._generate_members_html(member_stats, 'monthly', 'members_report_monthly.html', 'Points This Month')
+    
+    def _generate_members_html(self, member_stats, sort_by, filename, title):
+        """Generate a member report HTML file sorted by specified column"""
+        # Sort member stats based on sort_by parameter
+        if sort_by == 'daily':
+            sorted_stats = sorted(member_stats, key=lambda x: x['daily_points'], reverse=True)
+        elif sort_by == 'weekly':
+            sorted_stats = sorted(member_stats, key=lambda x: x['weekly_points'], reverse=True)
+        elif sort_by == 'monthly':
+            sorted_stats = sorted(member_stats, key=lambda x: x['monthly_points'], reverse=True)
+        else:  # total chests
+            sorted_stats = sorted(member_stats, key=lambda x: x['monthly_chests'], reverse=True)
+        
         # Generate HTML
         html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[ACE] Clan Members Report - Leadership Only</title>
+    <title>[ACE] Clan Members Report - {title}</title>
     <style>
         {self._get_css()}
         .members-table {{
@@ -249,6 +274,23 @@ class HTMLGenerator:
             text-align: left;
             font-weight: 700;
             border-bottom: 2px solid #ffd700;
+        }}
+        .members-table th a {{
+            color: #ffd700;
+            text-decoration: none;
+            display: block;
+            transition: all 0.3s ease;
+        }}
+        .members-table th a:hover {{
+            color: #ffed4e;
+            text-decoration: underline;
+        }}
+        .members-table th.active {{
+            background: linear-gradient(135deg, #2a5298 0%, #3a72b8 100%);
+        }}
+        .members-table th.active a {{
+            color: #ffffff;
+            font-weight: 900;
         }}
         .members-table td {{
             padding: 12px 15px;
@@ -282,26 +324,26 @@ class HTMLGenerator:
         <header class="header">
             <div class="title-section">
                 <h1 class="main-title">⚔️ TOTAL BATTLE</h1>
-                <h2 class="sub-title">[ACE] Clan Members Report</h2>
+                <h2 class="sub-title">[ACE] Clan Members Report - Sorted by {title}</h2>
             </div>
             <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
         </header>
 
         <div class="stats-overview">
             <div class="stat-card">
-                <div class="stat-value">{len(member_stats)}</div>
+                <div class="stat-value">{len(sorted_stats)}</div>
                 <div class="stat-label">Total Members</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{sum(1 for m in member_stats if m['daily_chests'] > 0)}</div>
+                <div class="stat-value">{sum(1 for m in sorted_stats if m['daily_chests'] > 0)}</div>
                 <div class="stat-label">Active Today</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{sum(1 for m in member_stats if m['weekly_chests'] > 0)}</div>
+                <div class="stat-value">{sum(1 for m in sorted_stats if m['weekly_chests'] > 0)}</div>
                 <div class="stat-label">Active This Week</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{sum(m['monthly_points'] for m in member_stats):,}</div>
+                <div class="stat-value">{sum(m['monthly_points'] for m in sorted_stats):,}</div>
                 <div class="stat-label">Total Points (Month)</div>
             </div>
         </div>
@@ -311,26 +353,34 @@ class HTMLGenerator:
                 <tr>
                     <th style="width: 60px;">Rank</th>
                     <th>Member Name</th>
-                    <th style="width: 100px; text-align: center;">Today</th>
-                    <th style="width: 120px; text-align: center;">This Week</th>
-                    <th style="width: 120px; text-align: center;">This Month</th>
-                    <th style="width: 120px; text-align: center;">Total Points</th>
+                    <th style="width: 120px; text-align: center;" class="{'active' if sort_by == 'daily' else ''}">
+                        <a href="members_report_today.html">Points Today</a>
+                    </th>
+                    <th style="width: 140px; text-align: center;" class="{'active' if sort_by == 'weekly' else ''}">
+                        <a href="members_report_weekly.html">Points This Week</a>
+                    </th>
+                    <th style="width: 150px; text-align: center;" class="{'active' if sort_by == 'monthly' else ''}">
+                        <a href="members_report_monthly.html">Points This Month</a>
+                    </th>
+                    <th style="width: 120px; text-align: center;" class="{'active' if sort_by == 'total' else ''}">
+                        <a href="members_report.html">Total Chests</a>
+                    </th>
                 </tr>
             </thead>
             <tbody>
 """
         
         # Add member rows
-        for rank, member in enumerate(member_stats, 1):
+        for rank, member in enumerate(sorted_stats, 1):
             rank_class = f"rank-{rank}" if rank <= 3 else ""
             html += f"""
                 <tr>
                     <td class="rank-cell {rank_class}">#{rank}</td>
                     <td>{member['name']}</td>
-                    <td style="text-align: center;">{member['daily_chests']}</td>
-                    <td style="text-align: center;">{member['weekly_chests']}</td>
+                    <td class="points-cell" style="text-align: center;">{member['daily_points']:,}</td>
+                    <td class="points-cell" style="text-align: center;">{member['weekly_points']:,}</td>
+                    <td class="points-cell" style="text-align: center;">{member['monthly_points']:,}</td>
                     <td style="text-align: center;">{member['monthly_chests']}</td>
-                    <td class="points-cell" style="text-align: center;">{member['total_points']:,}</td>
                 </tr>
 """
         
@@ -345,7 +395,172 @@ class HTMLGenerator:
 </body>
 </html>"""
         
-        filepath = self.output_dir / "members_report.html"
+        filepath = self.output_dir / filename
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(html)
+        
+        return str(filepath)
+    
+    def generate_point_values_page(self):
+        """Generate point values reference page for clan members"""
+        point_values = self.config.get('points', {})
+        chest_types = self.config.get('chest_types', [])
+        
+        # Use the order from chest_types config, filter to only those with point values set
+        # Also include any point values not in chest_types list (append at end)
+        sorted_items = []
+        
+        # First, add all chest types in config order that have point values
+        for chest_type in chest_types:
+            if chest_type in point_values:
+                sorted_items.append((chest_type, point_values[chest_type]))
+        
+        # Then add any additional point values not in the chest_types list
+        for chest_type, points in point_values.items():
+            if chest_type not in chest_types:
+                sorted_items.append((chest_type, points))
+        
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>[ACE] Chest Point Values</title>
+    <style>
+        {self._get_css()}
+        .points-table {{
+            width: 100%;
+            max-width: 800px;
+            margin: 30px auto;
+            border-collapse: collapse;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            overflow: hidden;
+        }}
+        .points-table th {{
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffd700;
+            padding: 15px;
+            text-align: left;
+            font-weight: 700;
+            border-bottom: 2px solid #ffd700;
+        }}
+        .points-table td {{
+            padding: 12px 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            color: #e4e4e4;
+        }}
+        .points-table tr:hover {{
+            background: rgba(255,215,0,0.1);
+        }}
+        .points-table tr:nth-child(even) {{
+            background: rgba(0,0,0,0.2);
+        }}
+        .chest-name {{
+            font-weight: 600;
+        }}
+        .point-value {{
+            text-align: center;
+            font-weight: 700;
+            color: #4CAF50;
+            font-size: 1.2em;
+        }}
+        .back-link {{
+            display: inline-block;
+            margin: 20px 0;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffd700;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 700;
+            transition: all 0.3s ease;
+        }}
+        .back-link:hover {{
+            background: linear-gradient(135deg, #2a5298 0%, #3a72b8 100%);
+            transform: translateY(-2px);
+        }}
+        .info-box {{
+            background: rgba(255,215,0,0.1);
+            border-left: 4px solid #ffd700;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }}
+        .info-box p {{
+            margin: 5px 0;
+            color: #e4e4e4;
+        }}
+    </style>
+</head>
+<body>
+    <div class="background-pattern"></div>
+    
+    <div class="container">
+        <header class="header">
+            <div class="title-section">
+                <h1 class="main-title">⚔️ TOTAL BATTLE</h1>
+                <h2 class="sub-title">[ACE] Chest Point Values</h2>
+            </div>
+            <div class="timestamp">Updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        </header>
+
+        <a href="index.html" class="back-link">← Back to Dashboard</a>
+
+        <div class="info-box">
+            <p><strong>ℹ️ How Points Work:</strong></p>
+            <p>Each chest type is worth a specific number of points. Your ranking on the leaderboards is based on total points earned, not just the number of chests.</p>
+            <p>Higher-level chests are worth more points to reflect their greater value to the clan.</p>
+        </div>
+
+        <table class="points-table">
+            <thead>
+                <tr>
+                    <th>Chest Type</th>
+                    <th style="width: 150px; text-align: center;">Point Value</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+        
+        # Add rows for each chest type
+        for chest_type, points in sorted_items:
+            html += f"""
+                <tr>
+                    <td class="chest-name">{chest_type}</td>
+                    <td class="point-value">{points}</td>
+                </tr>
+"""
+        
+        # If no point values set yet
+        if not sorted_items:
+            html += """
+                <tr>
+                    <td colspan="2" style="text-align: center; padding: 30px; color: #999;">
+                        No point values configured yet. Contact clan leadership for point value assignments.
+                    </td>
+                </tr>
+"""
+        
+        html += f"""
+            </tbody>
+        </table>
+
+        <div class="info-box">
+            <p><strong>💡 Tips:</strong></p>
+            <p>• Focus on higher-point chests when possible to maximize your contribution</p>
+            <p>• Check the daily/weekly reports to see where you rank</p>
+            <p>• Every chest counts toward the clan's success!</p>
+        </div>
+
+        <footer class="footer">
+            <p>[ACE] Clan Chest Tracker • Point values set by clan leadership</p>
+        </footer>
+    </div>
+</body>
+</html>"""
+        
+        filepath = self.output_dir / "point_values.html"
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(html)
         
@@ -357,8 +572,10 @@ class HTMLGenerator:
         
         deleted_count = 0
         for html_file in self.output_dir.glob("*.html"):
-            # Don't delete index.html
-            if html_file.name == "index.html":
+            # Don't delete index.html, member reports, or point values page
+            if html_file.name in ["index.html", "members_report.html", 
+                                   "members_report_today.html", "members_report_weekly.html", 
+                                   "members_report_monthly.html", "point_values.html"]:
                 continue
             
             # Get file modification time

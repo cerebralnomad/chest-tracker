@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QSpinBox, QGroupBox, QTextEdit, QTabWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QLineEdit,
-    QFormLayout, QScrollArea, QComboBox, QInputDialog
+    QFormLayout, QScrollArea, QComboBox, QInputDialog, QDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPalette, QColor
@@ -434,46 +434,74 @@ class CoordinateSetup(QWidget):
     
     def find_click_coords(self):
         """Help user find click coordinates by showing mouse position"""
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Find Click Coordinates")
-        msg.setText(
-            "Move your mouse over the 'Open' button for the FIRST chest.\n"
-            "Press SPACE BAR to capture the coordinates.\n"
-            "(Or click OK if you've already positioned the mouse)"
+        # Simple countdown approach - no keyboard needed
+        reply = QMessageBox.information(
+            self,
+            "Find Click Coordinates",
+            "Instructions:\n\n"
+            "1. Click OK to start a 5-second countdown\n"
+            "2. Quickly move your mouse over the 'Open' button\n"
+            "3. Keep it there until the countdown finishes\n"
+            "4. Coordinates will be captured automatically\n",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
         )
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
         
-        # Create a timer to update mouse position
-        coord_label = QLabel("Move mouse to Open button, then press SPACE...")
-        msg.layout().addWidget(coord_label, 1, 0, 1, 2)
+        if reply == QMessageBox.StandardButton.Cancel:
+            return
         
+        # Create countdown dialog
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout
+        
+        countdown_dialog = QDialog(self)
+        countdown_dialog.setWindowTitle("Capturing Coordinates...")
+        countdown_dialog.setModal(True)
+        countdown_dialog.setFixedSize(400, 150)
+        
+        layout = QVBoxLayout()
+        
+        self.countdown_label = QLabel("Get ready...")
+        self.countdown_label.setStyleSheet("font-size: 24pt; font-weight: bold; padding: 20px; color: #FF5722;")
+        self.countdown_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.countdown_label)
+        
+        self.coord_display = QLabel("Position your mouse over the Open button")
+        self.coord_display.setStyleSheet("font-size: 12pt; padding: 10px;")
+        self.coord_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.coord_display)
+        
+        countdown_dialog.setLayout(layout)
+        
+        # Countdown logic
+        self.countdown_value = 5
         self.captured_coords = None
         
-        def update_coords():
-            x, y = pyautogui.position()
-            if self.captured_coords:
-                coord_label.setText(f"✓ CAPTURED: X={self.captured_coords[0]}, Y={self.captured_coords[1]}")
+        def countdown_tick():
+            if self.countdown_value > 0:
+                self.countdown_label.setText(f"{self.countdown_value}")
+                x, y = pyautogui.position()
+                self.coord_display.setText(f"Current position: X={x}, Y={y}")
+                self.countdown_value -= 1
             else:
-                coord_label.setText(f"Current position: X={x}, Y={y} (Press SPACE to capture)")
-        
-        def capture_on_space(event):
-            if event.key() == Qt.Key.Key_Space and not self.captured_coords:
+                # Capture!
                 self.captured_coords = pyautogui.position()
-        
-        msg.keyPressEvent = capture_on_space
+                self.countdown_label.setText("✓ CAPTURED!")
+                self.countdown_label.setStyleSheet("font-size: 24pt; font-weight: bold; padding: 20px; color: #4CAF50;")
+                self.coord_display.setText(f"Saved: X={self.captured_coords[0]}, Y={self.captured_coords[1]}")
+                QTimer.singleShot(1500, countdown_dialog.accept)
         
         timer = QTimer()
-        timer.timeout.connect(update_coords)
-        timer.start(100)  # Update every 100ms
+        timer.timeout.connect(countdown_tick)
+        timer.start(1000)  # 1 second intervals
         
-        result = msg.exec()
+        # Start countdown
+        countdown_tick()
+        
+        # Show dialog
+        countdown_dialog.exec()
         timer.stop()
         
-        if result == QMessageBox.StandardButton.Ok:
-            if self.captured_coords:
-                x, y = self.captured_coords
-            else:
-                x, y = pyautogui.position()
+        if self.captured_coords:
+            x, y = self.captured_coords
             
             # Save to current profile
             profile_name = self.profile_combo.currentText()
@@ -1419,12 +1447,22 @@ class MainWindow(QMainWindow):
         # Save current coordinates to active profile
         if self.coord_setup.coords:
             active_profile = self.config.get_active_profile()
+            
+            # Get existing profile to preserve click coordinates
+            existing_coords = self.config.get_profile(active_profile)
+            
             coords_dict = {
                 'x': self.coord_setup.coords[0],
                 'y': self.coord_setup.coords[1],
                 'width': self.coord_setup.coords[2],
                 'height': self.coord_setup.coords[3]
             }
+            
+            # Preserve click coordinates if they exist
+            if existing_coords and 'click_x' in existing_coords and 'click_y' in existing_coords:
+                coords_dict['click_x'] = existing_coords['click_x']
+                coords_dict['click_y'] = existing_coords['click_y']
+            
             self.config.save_profile(active_profile, coords_dict)
         
         # Stop capture if running
@@ -1439,6 +1477,7 @@ class MainWindow(QMainWindow):
             generator.generate_daily_report()
             generator.generate_weekly_report()
             generator.generate_monthly_report()
+            generator.generate_point_values_page()
             generator.generate_index()
             generator.generate_members_report(self.members)
             generator.cleanup_old_reports()

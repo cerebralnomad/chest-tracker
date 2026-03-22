@@ -200,7 +200,23 @@ class DatabaseManager:
         for player_data in stats.values():
             total_points = 0
             for chest_type, count in player_data['chest_types'].items():
-                points = point_values.get(chest_type, 10)  # Default 10 points
+                # Try exact match first
+                points = point_values.get(chest_type, None)
+                
+                # If no exact match, try to extract the source portion (after " - ")
+                if points is None and " - " in chest_type:
+                    source_portion = chest_type.split(" - ", 1)[1]
+                    points = point_values.get(source_portion, None)
+                
+                # If still no match, try to match just the first part (before " - ")
+                if points is None and " - " in chest_type:
+                    chest_name_portion = chest_type.split(" - ", 1)[0]
+                    points = point_values.get(chest_name_portion, None)
+                
+                # Default to 10 points if no match found
+                if points is None:
+                    points = 10
+                
                 total_points += points * count
             player_data['total_points'] = total_points
         
