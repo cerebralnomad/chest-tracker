@@ -105,7 +105,7 @@ class MembersManager:
         conn.close()
         return exists
     
-    def get_member_stats(self, name, daily_db, weekly_db, monthly_db, point_values):
+    def get_member_stats(self, name, daily_db, weekly_db, monthly_db, last_weekly_db, point_values):
         """Calculate member statistics from chest databases"""
         stats = {
             'name': name,
@@ -114,6 +114,7 @@ class MembersManager:
             'monthly_chests': 0,
             'daily_points': 0,
             'weekly_points': 0,
+            'last_week_points': 0,
             'monthly_points': 0,
             'total_points': 0
         }
@@ -127,6 +128,11 @@ class MembersManager:
         weekly_data = self._get_chests_for_member(weekly_db, name)
         stats['weekly_chests'] = weekly_data['count']
         stats['weekly_points'] = self._calculate_points(weekly_data['chests'], point_values)
+        
+        # Get last week stats
+        if last_weekly_db:
+            last_week_data = self._get_chests_for_member(last_weekly_db, name)
+            stats['last_week_points'] = self._calculate_points(last_week_data['chests'], point_values)
         
         # Get monthly stats
         monthly_data = self._get_chests_for_member(monthly_db, name)
@@ -166,23 +172,26 @@ class MembersManager:
     
     def _calculate_points(self, chests, point_values):
         """Calculate total points from chest list"""
+        # Create case-insensitive lookup dictionary
+        case_insensitive_points = {k.lower(): v for k, v in point_values.items()}
+        
         total = 0
         for chest in chests:
             chest_type = chest['type']
             count = chest['count']
             
-            # Try exact match first
-            points = point_values.get(chest_type, None)
+            # Try case-insensitive match first
+            points = case_insensitive_points.get(chest_type.lower(), None)
             
             # If no exact match, try to extract the source portion (after " - ")
             if points is None and " - " in chest_type:
                 source_portion = chest_type.split(" - ", 1)[1]
-                points = point_values.get(source_portion, None)
+                points = case_insensitive_points.get(source_portion.lower(), None)
             
             # If still no match, try to match just the first part (before " - ")
             if points is None and " - " in chest_type:
                 chest_name_portion = chest_type.split(" - ", 1)[0]
-                points = point_values.get(chest_name_portion, None)
+                points = case_insensitive_points.get(chest_name_portion.lower(), None)
             
             # Default to 10 points if no match found
             if points is None:
@@ -196,12 +205,22 @@ class MembersManager:
         members = self.get_all_members()
         stats = []
         
+        # Calculate last week's database path
+        from datetime import datetime, timedelta
+        last_week_date = datetime.now() - timedelta(weeks=1)
+        last_week_str = last_week_date.strftime("%Y-W%U")
+        last_weekly_db = Path(weekly_db).parent / f"weekly_{last_week_str}.db"
+        
+        # Only use last week db if it exists
+        last_weekly_db = str(last_weekly_db) if last_weekly_db.exists() else None
+        
         for member in members:
             member_stats = self.get_member_stats(
                 member['name'],
                 daily_db,
                 weekly_db,
                 monthly_db,
+                last_weekly_db,
                 point_values
             )
             member_stats['added_by'] = member['added_by']

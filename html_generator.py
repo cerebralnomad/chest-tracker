@@ -39,8 +39,25 @@ class HTMLGenerator:
     
     def generate_weekly_report(self):
         """Generate weekly HTML report"""
-        week_str = datetime.now().strftime("%Y-W%U")
+        current_date = datetime.now()
+        week_str = current_date.strftime("%Y-W%U")
         filename = f"weekly_report_{week_str}.html"
+        
+        # Calculate previous and next week dates
+        from datetime import timedelta
+        prev_week_date = current_date - timedelta(weeks=1)
+        next_week_date = current_date + timedelta(weeks=1)
+        
+        prev_week_str = prev_week_date.strftime("%Y-W%U")
+        next_week_str = next_week_date.strftime("%Y-W%U")
+        
+        # Check if previous/next week reports exist
+        prev_report_exists = (self.output_dir / f"weekly_report_{prev_week_str}.html").exists()
+        
+        # Next week report only exists if we're viewing an old report
+        # For current week, next week doesn't exist yet
+        is_current_week = True  # This is always the current week when generated
+        next_report_exists = False  # Never show next for current week
         
         point_values = self.config.get('points', {})
         stats = self.db.get_detailed_stats(self.db.weekly_db, point_values)
@@ -48,7 +65,13 @@ class HTMLGenerator:
         html = self._create_html(
             title=f"Weekly Report - Week {week_str}",
             stats=stats,
-            period_type="weekly"
+            period_type="weekly",
+            navigation={
+                'prev_link': f"weekly_report_{prev_week_str}.html" if prev_report_exists else None,
+                'next_link': None,  # Never show next for current week
+                'prev_label': f"Week {prev_week_str}",
+                'next_label': f"Week {next_week_str}"
+            }
         )
         
         filepath = self.output_dir / filename
@@ -232,10 +255,11 @@ class HTMLGenerator:
             point_values
         )
         
-        # Generate all 4 variants
+        # Generate all 5 variants
         self._generate_members_html(member_stats, 'total', 'members_report.html', 'Total Chests')
         self._generate_members_html(member_stats, 'daily', 'members_report_today.html', 'Points Today')
         self._generate_members_html(member_stats, 'weekly', 'members_report_weekly.html', 'Points This Week')
+        self._generate_members_html(member_stats, 'last_week', 'members_report_last_week.html', 'Points Last Week')
         self._generate_members_html(member_stats, 'monthly', 'members_report_monthly.html', 'Points This Month')
     
     def _generate_members_html(self, member_stats, sort_by, filename, title):
@@ -245,6 +269,8 @@ class HTMLGenerator:
             sorted_stats = sorted(member_stats, key=lambda x: x['daily_points'], reverse=True)
         elif sort_by == 'weekly':
             sorted_stats = sorted(member_stats, key=lambda x: x['weekly_points'], reverse=True)
+        elif sort_by == 'last_week':
+            sorted_stats = sorted(member_stats, key=lambda x: x['last_week_points'], reverse=True)
         elif sort_by == 'monthly':
             sorted_stats = sorted(member_stats, key=lambda x: x['monthly_points'], reverse=True)
         else:  # total chests
@@ -359,6 +385,9 @@ class HTMLGenerator:
                     <th style="width: 140px; text-align: center;" class="{'active' if sort_by == 'weekly' else ''}">
                         <a href="members_report_weekly.html">Points This Week</a>
                     </th>
+                    <th style="width: 140px; text-align: center;" class="{'active' if sort_by == 'last_week' else ''}">
+                        <a href="members_report_last_week.html">Points Last Week</a>
+                    </th>
                     <th style="width: 150px; text-align: center;" class="{'active' if sort_by == 'monthly' else ''}">
                         <a href="members_report_monthly.html">Points This Month</a>
                     </th>
@@ -379,6 +408,7 @@ class HTMLGenerator:
                     <td>{member['name']}</td>
                     <td class="points-cell" style="text-align: center;">{member['daily_points']:,}</td>
                     <td class="points-cell" style="text-align: center;">{member['weekly_points']:,}</td>
+                    <td class="points-cell" style="text-align: center;">{member['last_week_points']:,}</td>
                     <td class="points-cell" style="text-align: center;">{member['monthly_points']:,}</td>
                     <td style="text-align: center;">{member['monthly_chests']}</td>
                 </tr>
@@ -575,7 +605,8 @@ class HTMLGenerator:
             # Don't delete index.html, member reports, or point values page
             if html_file.name in ["index.html", "members_report.html", 
                                    "members_report_today.html", "members_report_weekly.html", 
-                                   "members_report_monthly.html", "point_values.html"]:
+                                   "members_report_last_week.html", "members_report_monthly.html", 
+                                   "point_values.html"]:
                 continue
             
             # Get file modification time
@@ -594,7 +625,47 @@ class HTMLGenerator:
         
         return deleted_count
     
-    def _create_html(self, title, stats, period_type):
+    def _generate_navigation_html(self, navigation, title):
+        """Generate navigation arrows HTML"""
+        if not navigation:
+            # No navigation, just show the period badge
+            return f'<div class="period-badge">{title}</div>'
+        
+        prev_link = navigation.get('prev_link')
+        next_link = navigation.get('next_link')
+        prev_label = navigation.get('prev_label', 'Previous')
+        next_label = navigation.get('next_label', 'Next')
+        
+        # Left arrow SVG
+        left_arrow = '''<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+        </svg>'''
+        
+        # Right arrow SVG
+        right_arrow = '''<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+        </svg>'''
+        
+        # Generate previous arrow
+        if prev_link:
+            prev_html = f'<a href="{prev_link}" class="nav-arrow">{left_arrow}<span>← {prev_label}</span></a>'
+        else:
+            prev_html = f'<span class="nav-arrow disabled">{left_arrow}<span>← {prev_label}</span></span>'
+        
+        # Generate next arrow
+        if next_link:
+            next_html = f'<a href="{next_link}" class="nav-arrow"><span>{next_label} →</span>{right_arrow}</a>'
+        else:
+            next_html = f'<span class="nav-arrow disabled"><span>{next_label} →</span>{right_arrow}</span>'
+        
+        # Combine with period badge in the middle
+        return f'''
+            {prev_html}
+            <div class="period-badge">{title}</div>
+            {next_html}
+        '''
+    
+    def _create_html(self, title, stats, period_type, navigation=None):
         """Create complete HTML document"""
         
         # Sort players by points
@@ -627,7 +698,9 @@ class HTMLGenerator:
                 <h1 class="main-title">⚔️ TOTAL BATTLE</h1>
                 <h2 class="sub-title">[ACE] Clan Chest Tracker</h2>
             </div>
-            <div class="period-badge">{title}</div>
+            <div class="navigation-container">
+                {self._generate_navigation_html(navigation, title)}
+            </div>
             <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
         </header>
 
@@ -788,6 +861,49 @@ class HTMLGenerator:
             margin-top: 15px;
             color: rgba(255,255,255,0.6);
             font-size: 0.9em;
+        }
+
+        .navigation-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .nav-arrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            border: 2px solid rgba(255,215,0,0.3);
+            border-radius: 8px;
+            color: #ffd700;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.95em;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .nav-arrow:hover {
+            background: linear-gradient(135deg, #2a5298 0%, #3a72b8 100%);
+            border-color: #ffd700;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(255,215,0,0.3);
+        }
+
+        .nav-arrow.disabled {
+            opacity: 0.3;
+            pointer-events: none;
+            cursor: not-allowed;
+        }
+
+        .nav-arrow svg {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
         }
 
         .stats-overview {

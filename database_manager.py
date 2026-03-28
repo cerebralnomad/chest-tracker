@@ -176,13 +176,47 @@ class DatabaseManager:
         cursor.execute('SELECT player_name, total_chests, chest_types FROM player_summary')
         results = cursor.fetchall()
         
+        # List of chest name prefixes to filter out (OCR artifacts)
+        chest_name_prefixes = [
+            'Fire Chest', 'Stone Chest', 'Barbarian Chest', 'Bone Chest',
+            'Cobra Chest', 'Orc Chest', 'Elegant Chest', 'Infernal Chest',
+            'Mayan Chest', 'Gnome Workshop Chest', 'Gladiator\'s Chest'
+        ]
+        
         stats = {}
         for player_name, total_chests, chest_types_json in results:
-            chest_types = json.loads(chest_types_json) if chest_types_json else {}
+            raw_chest_types = json.loads(chest_types_json) if chest_types_json else {}
+            
+            # Normalize chest types by extracting source portion (after " - ")
+            # This groups "Barbarian Chest - Level 5 Crypt" and "Bone Chest - Level 5 Crypt" 
+            # into a single "Level 5 Crypt" entry
+            normalized_chest_types = {}
+            for chest_type, count in raw_chest_types.items():
+                # Skip obvious OCR garbage
+                if (chest_type.startswith('From:') or 
+                    chest_type in ['Clan', 'ar', 'lar', ''] or
+                    len(chest_type) < 3):
+                    continue
+                
+                # Skip standalone chest name prefixes (OCR picked up just the name without source)
+                if chest_type in chest_name_prefixes:
+                    continue
+                
+                # Extract source portion if format is "Name - Source"
+                if " - " in chest_type:
+                    normalized_name = chest_type.split(" - ", 1)[1]
+                else:
+                    normalized_name = chest_type
+                
+                # Add to normalized dict, combining counts
+                if normalized_name in normalized_chest_types:
+                    normalized_chest_types[normalized_name] += count
+                else:
+                    normalized_chest_types[normalized_name] = count
             
             stats[player_name] = {
                 'total_chests': total_chests,
-                'chest_types': chest_types,
+                'chest_types': normalized_chest_types,
                 'total_points': 0  # Will be calculated by caller with point values
             }
         
@@ -196,29 +230,69 @@ class DatabaseManager:
         
         stats = self._get_stats(db_path)
         
+        # Create case-insensitive lookup dictionary
+        case_insensitive_points = {k.lower(): v for k, v in point_values.items()}
+        
+        # List of chest name prefixes to filter out (should match _get_stats)
+        chest_name_prefixes = [
+            'fire chest', 'stone chest', 'barbarian chest', 'bone chest',
+            'cobra chest', 'orc chest', 'elegant chest', 'infernal chest',
+            'mayan chest', 'gnome workshop chest', 'gladiator\'s chest'
+        ]
+        
         # Calculate points for each player
-        for player_data in stats.values():
+        for player_name, player_data in stats.items():
             total_points = 0
             for chest_type, count in player_data['chest_types'].items():
-                # Try exact match first
-                points = point_values.get(chest_type, None)
+                # Skip obvious OCR garbage
+                if (chest_type.startswith('From:') or 
+                    chest_type in ['Clan', 'ar', 'lar'] or
+                    chest_type.lower() in chest_name_prefixes):
+                    print(f"DEBUG: Skipping OCR garbage: '{chest_type}'")
+                    continue
+                
+                # Fix common OCR errors: letter O -> digit 0
+                corrected_type = chest_type.replace(' 1o ', ' 10 ').replace(' 2o ', ' 20 ')
+                corrected_type = corrected_type.replace('Level 1o ', 'Level 10 ')
+                corrected_type = corrected_type.replace('Level 2o ', 'Level 20 ')
+                corrected_type = corrected_type.replace('Level 10o ', 'Level 100 ')
+                
+                # Try case-insensitive match
+                points = case_insensitive_points.get(corrected_type.lower(), None)
                 
                 # If no exact match, try to extract the source portion (after " - ")
-                if points is None and " - " in chest_type:
-                    source_portion = chest_type.split(" - ", 1)[1]
-                    points = point_values.get(source_portion, None)
+                if points is None and " - " in corrected_type:
+                    source_portion = corrected_type.split(" - ", 1)[1]
+                    points = case_insensitive_points.get(source_portion.lower(), None)
+                    if points:
+                        print(f"DEBUG: Matched '{chest_type}' via source portion '{source_portion}' = {points}")
                 
                 # If still no match, try to match just the first part (before " - ")
-                if points is None and " - " in chest_type:
-                    chest_name_portion = chest_type.split(" - ", 1)[0]
-                    points = point_values.get(chest_name_portion, None)
+                if points is None and " - " in corrected_type:
+                    chest_name_portion = corrected_type.split(" - ", 1)[0]
+                    points = case_insensitive_points.get(chest_name_portion.lower(), None)
+                    if points:
+                        print(f"DEBUG: Matched '{chest_type}' via chest name '{chest_name_portion}' = {points}")
+                
+                # Try fuzzy match for truncated text (e.g., "Ancien" -> "Ancient")
+                if points is None:
+                    for key, value in case_insensitive_points.items():
+                        # Check if the key starts with the corrected type (truncation match)
+                        if key.startswith(corrected_type.lower()) or corrected_type.lower().startswith(key):
+                            points = value
+                            print(f"DEBUG: Fuzzy matched '{chest_type}' to '{key}' = {points}")
+                            break
                 
                 # Default to 10 points if no match found
                 if points is None:
+                    print(f"DEBUG: No match found for '{chest_type}', defaulting to 10 points")
                     points = 10
+                else:
+                    print(f"DEBUG: {player_name} - {chest_type} x{count} = {points} points each")
                 
                 total_points += points * count
             player_data['total_points'] = total_points
+            print(f"DEBUG: {player_name} total points = {total_points}")
         
         return stats
     
