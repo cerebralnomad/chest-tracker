@@ -149,6 +149,7 @@ This will:
 
 1. Open Total Battle and navigate to clan chests screen
 2. Make sure the chest list is visible in the configured capture area
+   (you will probably need to drag the program window away from the chest list window)
 3. Select profile on "Coordinates" tab if necessary
 4. Go to the "Capture" tab
 5. Click "Start Processing"
