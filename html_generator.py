@@ -5,6 +5,7 @@ Creates self-contained, uploadable HTML reports with charts and rankings
 
 from pathlib import Path
 from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 import json
 
 
@@ -19,8 +20,22 @@ class HTMLGenerator:
     
     def generate_daily_report(self):
         """Generate daily HTML report"""
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        from datetime import timedelta
+        
+        current_date = datetime.now()
+        date_str = current_date.strftime("%Y-%m-%d")
         filename = f"daily_report_{date_str}.html"
+        
+        # Calculate previous and next day
+        prev_day = current_date - timedelta(days=1)
+        next_day = current_date + timedelta(days=1)
+        
+        prev_day_str = prev_day.strftime("%Y-%m-%d")
+        next_day_str = next_day.strftime("%Y-%m-%d")
+        
+        # Check if previous/next day reports exist
+        prev_report_exists = (self.output_dir / f"daily_report_{prev_day_str}.html").exists()
+        next_report_exists = (self.output_dir / f"daily_report_{next_day_str}.html").exists()
         
         point_values = self.config.get('points', {})
         stats = self.db.get_detailed_stats(self.db.daily_db, point_values)
@@ -28,7 +43,13 @@ class HTMLGenerator:
         html = self._create_html(
             title=f"Daily Report - {date_str}",
             stats=stats,
-            period_type="daily"
+            period_type="daily",
+            navigation={
+                'prev_link': f"daily_report_{prev_day_str}.html" if prev_report_exists else None,
+                'next_link': f"daily_report_{next_day_str}.html" if next_report_exists else None,
+                'prev_label': prev_day_str,
+                'next_label': next_day_str
+            }
         )
         
         filepath = self.output_dir / filename
@@ -53,11 +74,7 @@ class HTMLGenerator:
         
         # Check if previous/next week reports exist
         prev_report_exists = (self.output_dir / f"weekly_report_{prev_week_str}.html").exists()
-        
-        # Next week report only exists if we're viewing an old report
-        # For current week, next week doesn't exist yet
-        is_current_week = True  # This is always the current week when generated
-        next_report_exists = False  # Never show next for current week
+        next_report_exists = (self.output_dir / f"weekly_report_{next_week_str}.html").exists()
         
         point_values = self.config.get('points', {})
         stats = self.db.get_detailed_stats(self.db.weekly_db, point_values)
@@ -68,7 +85,7 @@ class HTMLGenerator:
             period_type="weekly",
             navigation={
                 'prev_link': f"weekly_report_{prev_week_str}.html" if prev_report_exists else None,
-                'next_link': None,  # Never show next for current week
+                'next_link': f"weekly_report_{next_week_str}.html" if next_report_exists else None,
                 'prev_label': f"Week {prev_week_str}",
                 'next_label': f"Week {next_week_str}"
             }
@@ -82,8 +99,22 @@ class HTMLGenerator:
     
     def generate_monthly_report(self):
         """Generate monthly HTML report"""
-        month_str = datetime.now().strftime("%Y-%m")
+        from dateutil.relativedelta import relativedelta
+        
+        current_date = datetime.now()
+        month_str = current_date.strftime("%Y-%m")
         filename = f"monthly_report_{month_str}.html"
+        
+        # Calculate previous and next month
+        prev_month = current_date - relativedelta(months=1)
+        next_month = current_date + relativedelta(months=1)
+        
+        prev_month_str = prev_month.strftime("%Y-%m")
+        next_month_str = next_month.strftime("%Y-%m")
+        
+        # Check if previous/next month reports exist
+        prev_report_exists = (self.output_dir / f"monthly_report_{prev_month_str}.html").exists()
+        next_report_exists = (self.output_dir / f"monthly_report_{next_month_str}.html").exists()
         
         point_values = self.config.get('points', {})
         stats = self.db.get_detailed_stats(self.db.monthly_db, point_values)
@@ -91,7 +122,13 @@ class HTMLGenerator:
         html = self._create_html(
             title=f"Monthly Report - {month_str}",
             stats=stats,
-            period_type="monthly"
+            period_type="monthly",
+            navigation={
+                'prev_link': f"monthly_report_{prev_month_str}.html" if prev_report_exists else None,
+                'next_link': f"monthly_report_{next_month_str}.html" if next_report_exists else None,
+                'prev_label': prev_month_str,
+                'next_label': next_month_str
+            }
         )
         
         filepath = self.output_dir / filename
@@ -261,6 +298,271 @@ class HTMLGenerator:
         self._generate_members_html(member_stats, 'weekly', 'members_report_weekly.html', 'Points This Week')
         self._generate_members_html(member_stats, 'last_week', 'members_report_last_week.html', 'Points Last Week')
         self._generate_members_html(member_stats, 'monthly', 'members_report_monthly.html', 'Points This Month')
+        
+        # Generate individual member detail pages
+        self._generate_member_detail_pages(members_manager, point_values)
+    
+    def _generate_member_detail_pages(self, members_manager, point_values):
+        """Generate individual detail page for each member"""
+        members = members_manager.get_all_members()
+        
+        # Get last week's database path
+        last_week = datetime.now() - timedelta(weeks=1)
+        last_week_str = last_week.strftime("%Y-W%U")
+        last_weekly_db = self.db.db_dir / f"weekly_{last_week_str}.db"
+        
+        for member in members:
+            member_name = member['name']
+            
+            # Get detailed stats
+            detail = members_manager.get_member_detail(
+                member_name,
+                self.db.daily_db,
+                self.db.weekly_db,
+                self.db.monthly_db,
+                str(last_weekly_db),
+                point_values
+            )
+            
+            # Generate HTML for this member
+            self._generate_member_detail_html(detail)
+    
+    def _generate_member_detail_html(self, detail):
+        """Generate HTML page for individual member"""
+        member_name = detail['name']
+        safe_name = member_name.replace(' ', '_').replace("'", "")
+        filename = f"member_{safe_name}.html"
+        
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{member_name} - Member Details</title>
+    <style>
+        {self._get_css()}
+        .back-link {{
+            display: inline-block;
+            margin: 20px 0;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffd700;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 700;
+            transition: all 0.3s ease;
+        }}
+        .back-link:hover {{
+            background: linear-gradient(135deg, #2a5298 0%, #3a72b8 100%);
+            transform: translateY(-2px);
+        }}
+        .period-stats {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }}
+        .period-card {{
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #ffd700;
+        }}
+        .period-title {{
+            color: #ffd700;
+            font-size: 1.2em;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }}
+        .stat-row {{
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }}
+        .stat-label {{
+            color: #e4e4e4;
+        }}
+        .stat-value {{
+            color: #4CAF50;
+            font-weight: 700;
+        }}
+        .chest-breakdown {{
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }}
+        .breakdown-title {{
+            color: #ffd700;
+            font-size: 1.1em;
+            font-weight: 700;
+            margin-bottom: 15px;
+        }}
+        .chest-list {{
+            display: grid;
+            gap: 8px;
+        }}
+        .chest-item {{
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 5px;
+        }}
+        .chest-name {{
+            color: #e4e4e4;
+        }}
+        .chest-count {{
+            color: #ffd700;
+            font-weight: 700;
+        }}
+    </style>
+</head>
+<body>
+    <div class="background-pattern"></div>
+    
+    <div class="container">
+        <header class="header">
+            <div class="title-section">
+                <h1 class="main-title">⚔️ {member_name}</h1>
+                <h2 class="sub-title">Member Performance Details</h2>
+            </div>
+            <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        </header>
+
+        <a href="members_report.html" class="back-link">← Back to Members List</a>
+
+        <div class="period-stats">
+            <div class="period-card">
+                <div class="period-title">📅 Today</div>
+                <div class="stat-row">
+                    <span class="stat-label">Chests:</span>
+                    <span class="stat-value">{detail['daily_chests']}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Points:</span>
+                    <span class="stat-value">{detail['daily_points']:,}</span>
+                </div>
+            </div>
+
+            <div class="period-card">
+                <div class="period-title">📊 This Week</div>
+                <div class="stat-row">
+                    <span class="stat-label">Chests:</span>
+                    <span class="stat-value">{detail['weekly_chests']}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Points:</span>
+                    <span class="stat-value">{detail['weekly_points']:,}</span>
+                </div>
+            </div>
+
+            <div class="period-card">
+                <div class="period-title">⏮️ Last Week</div>
+                <div class="stat-row">
+                    <span class="stat-label">Points:</span>
+                    <span class="stat-value">{detail['last_week_points']:,}</span>
+                </div>
+            </div>
+
+            <div class="period-card">
+                <div class="period-title">📈 This Month</div>
+                <div class="stat-row">
+                    <span class="stat-label">Chests:</span>
+                    <span class="stat-value">{detail['monthly_chests']}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Points:</span>
+                    <span class="stat-value">{detail['monthly_points']:,}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="chest-breakdown">
+            <div class="breakdown-title">🗃️ Today's Chest Breakdown</div>
+            <div class="chest-list">
+"""
+        
+        if detail['daily_chest_details']:
+            for chest_type, count in detail['daily_chest_details']:
+                html += f"""
+                <div class="chest-item">
+                    <span class="chest-name">{chest_type}</span>
+                    <span class="chest-count">{count}</span>
+                </div>
+"""
+        else:
+            html += """
+                <div class="chest-item">
+                    <span class="chest-name" style="color: #999;">No chests today</span>
+                </div>
+"""
+        
+        html += """
+            </div>
+        </div>
+
+        <div class="chest-breakdown">
+            <div class="breakdown-title">🗃️ This Week's Chest Breakdown</div>
+            <div class="chest-list">
+"""
+        
+        if detail['weekly_chest_details']:
+            for chest_type, count in detail['weekly_chest_details']:
+                html += f"""
+                <div class="chest-item">
+                    <span class="chest-name">{chest_type}</span>
+                    <span class="chest-count">{count}</span>
+                </div>
+"""
+        else:
+            html += """
+                <div class="chest-item">
+                    <span class="chest-name" style="color: #999;">No chests this week</span>
+                </div>
+"""
+        
+        html += """
+            </div>
+        </div>
+
+        <div class="chest-breakdown">
+            <div class="breakdown-title">🗃️ This Month's Chest Breakdown</div>
+            <div class="chest-list">
+"""
+        
+        if detail['monthly_chest_details']:
+            for chest_type, count in detail['monthly_chest_details']:
+                html += f"""
+                <div class="chest-item">
+                    <span class="chest-name">{chest_type}</span>
+                    <span class="chest-count">{count}</span>
+                </div>
+"""
+        else:
+            html += """
+                <div class="chest-item">
+                    <span class="chest-name" style="color: #999;">No chests this month</span>
+                </div>
+"""
+        
+        html += """
+            </div>
+        </div>
+
+        <footer class="footer">
+            <p>[ACE] Clan Member Details • For Leadership Use Only</p>
+        </footer>
+    </div>
+</body>
+</html>"""
+        
+        filepath = self.output_dir / filename
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(html)
+        
+        return str(filepath)
     
     def _generate_members_html(self, member_stats, sort_by, filename, title):
         """Generate a member report HTML file sorted by specified column"""
@@ -322,6 +624,15 @@ class HTMLGenerator:
             padding: 12px 15px;
             border-bottom: 1px solid rgba(255,255,255,0.1);
             color: #e4e4e4;
+        }}
+        .members-table td a {{
+            color: #e4e4e4;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }}
+        .members-table td a:hover {{
+            color: #ffd700;
+            text-decoration: underline;
         }}
         .members-table tr:hover {{
             background: rgba(255,215,0,0.1);
@@ -402,10 +713,11 @@ class HTMLGenerator:
         # Add member rows
         for rank, member in enumerate(sorted_stats, 1):
             rank_class = f"rank-{rank}" if rank <= 3 else ""
+            safe_name = member['name'].replace(' ', '_').replace("'", "")
             html += f"""
                 <tr>
                     <td class="rank-cell {rank_class}">#{rank}</td>
-                    <td>{member['name']}</td>
+                    <td><a href="member_{safe_name}.html">{member['name']}</a></td>
                     <td class="points-cell" style="text-align: center;">{member['daily_points']:,}</td>
                     <td class="points-cell" style="text-align: center;">{member['weekly_points']:,}</td>
                     <td class="points-cell" style="text-align: center;">{member['last_week_points']:,}</td>

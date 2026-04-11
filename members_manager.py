@@ -144,6 +144,47 @@ class MembersManager:
         
         return stats
     
+    def get_member_detail(self, name, daily_db, weekly_db, monthly_db, last_weekly_db, point_values):
+        """Get detailed member statistics including chest type breakdowns"""
+        # Get basic stats
+        stats = self.get_member_stats(name, daily_db, weekly_db, monthly_db, last_weekly_db, point_values)
+        
+        # Get detailed chest breakdowns (normalized by source)
+        daily_data = self._get_chests_for_member(daily_db, name)
+        weekly_data = self._get_chests_for_member(weekly_db, name)
+        last_week_data = self._get_chests_for_member(last_weekly_db, name) if last_weekly_db and Path(last_weekly_db).exists() else {'count': 0, 'chests': []}
+        monthly_data = self._get_chests_for_member(monthly_db, name)
+        
+        # Normalize chest types (extract source portion)
+        stats['daily_chest_details'] = self._normalize_chest_types(daily_data['chests'])
+        stats['weekly_chest_details'] = self._normalize_chest_types(weekly_data['chests'])
+        stats['last_week_chest_details'] = self._normalize_chest_types(last_week_data['chests'])
+        stats['monthly_chest_details'] = self._normalize_chest_types(monthly_data['chests'])
+        
+        return stats
+    
+    def _normalize_chest_types(self, chests):
+        """Normalize chest types by extracting source portion and grouping"""
+        normalized = {}
+        for chest in chests:
+            chest_type = chest['type']
+            count = chest['count']
+            
+            # Extract source portion if format is "Name - Source"
+            if " - " in chest_type:
+                normalized_name = chest_type.split(" - ", 1)[1]
+            else:
+                normalized_name = chest_type
+            
+            # Combine counts for same normalized name
+            if normalized_name in normalized:
+                normalized[normalized_name] += count
+            else:
+                normalized[normalized_name] = count
+        
+        # Return sorted by count descending
+        return sorted(normalized.items(), key=lambda x: x[1], reverse=True)
+    
     def _get_chests_for_member(self, db_path, member_name):
         """Get chest count and types for a member from a database"""
         if not Path(db_path).exists():
