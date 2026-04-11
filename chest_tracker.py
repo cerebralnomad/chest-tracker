@@ -240,6 +240,9 @@ class CaptureThread(QThread):
                                 player_name = check_line.split(':', 1)[1].strip()
                             elif check_lower.startswith('from '):
                                 player_name = check_line[5:].strip()
+                            
+                            # Normalize player name (fix OCR errors)
+                            player_name = self._normalize_player_name(player_name)
                     
                     # Look for "Source:" or "Level" pattern
                     elif 'source:' in check_lower or check_lower.startswith('source '):
@@ -309,6 +312,32 @@ class CaptureThread(QThread):
         
         self.status_update.emit(f"Parsed {len(chests)} chest(s)")
         return chests
+    
+    def _normalize_player_name(self, name):
+        """Normalize player name to fix common OCR errors"""
+        if not name:
+            return name
+        
+        # Fix common OCR errors where 0 (zero) is read as o (letter oh) or g
+        # Strategy: If name ends with a number followed by 'o' or 'go', fix it
+        
+        # MasterCom9o -> MasterCom90
+        # MasterComgo -> MasterCom90
+        # Pattern: Letters + digits + 'o' at end
+        
+        import re
+        
+        # Fix patterns like "9o" -> "90", "1o" -> "10", etc.
+        name = re.sub(r'(\d)o$', r'\g<1>0', name)
+        
+        # Fix patterns like "go" -> "90" when preceded by other numbers
+        # MasterComgo -> MasterCom90
+        name = re.sub(r'(\d+)go$', r'\g<1>90', name)
+        
+        # Also fix in middle of name: Com9o -> Com90
+        name = re.sub(r'(\d)o(\D|$)', r'\g<1>0\g<2>', name)
+        
+        return name
     
     def stop(self):
         """Stop the capture thread"""
