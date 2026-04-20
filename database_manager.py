@@ -40,7 +40,8 @@ class DatabaseManager:
         days_since_monday = now.weekday()
         week_start = now - timedelta(days=days_since_monday)
         
-        week_str = week_start.strftime("%Y-W%U")
+        # Use %W (Monday as first day) instead of %U (Sunday as first day)
+        week_str = week_start.strftime("%Y-W%W")
         return self.db_dir / f"weekly_{week_str}.db"
     
     def _get_monthly_db(self):

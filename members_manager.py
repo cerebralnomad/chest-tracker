@@ -246,10 +246,13 @@ class MembersManager:
         members = self.get_all_members()
         stats = []
         
-        # Calculate last week's database path
+        # Calculate last week's database path using same method as database
         from datetime import datetime, timedelta
-        last_week_date = datetime.now() - timedelta(weeks=1)
-        last_week_str = last_week_date.strftime("%Y-W%U")
+        current_date = datetime.now()
+        days_since_monday = current_date.weekday()
+        this_week_start = current_date - timedelta(days=days_since_monday)
+        last_week_start = this_week_start - timedelta(weeks=1)
+        last_week_str = last_week_start.strftime("%Y-W%W")
         last_weekly_db = Path(weekly_db).parent / f"weekly_{last_week_str}.db"
         
         # Only use last week db if it exists

@@ -61,16 +61,19 @@ class HTMLGenerator:
     def generate_weekly_report(self):
         """Generate weekly HTML report"""
         current_date = datetime.now()
-        week_str = current_date.strftime("%Y-W%U")
+        
+        # Calculate week string using same method as database (Monday as first day)
+        days_since_monday = current_date.weekday()
+        week_start = current_date - timedelta(days=days_since_monday)
+        week_str = week_start.strftime("%Y-W%W")
         filename = f"weekly_report_{week_str}.html"
         
         # Calculate previous and next week dates
-        from datetime import timedelta
-        prev_week_date = current_date - timedelta(weeks=1)
-        next_week_date = current_date + timedelta(weeks=1)
+        prev_week_start = week_start - timedelta(weeks=1)
+        next_week_start = week_start + timedelta(weeks=1)
         
-        prev_week_str = prev_week_date.strftime("%Y-W%U")
-        next_week_str = next_week_date.strftime("%Y-W%U")
+        prev_week_str = prev_week_start.strftime("%Y-W%W")
+        next_week_str = next_week_start.strftime("%Y-W%W")
         
         # Check if previous/next week reports exist
         prev_report_exists = (self.output_dir / f"weekly_report_{prev_week_str}.html").exists()
@@ -139,9 +142,15 @@ class HTMLGenerator:
     
     def generate_index(self):
         """Generate index.html landing page"""
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        week_str = datetime.now().strftime("%Y-W%U")
-        month_str = datetime.now().strftime("%Y-%m")
+        current_date = datetime.now()
+        date_str = current_date.strftime("%Y-%m-%d")
+        
+        # Calculate week string using same method as database (Monday as first day)
+        days_since_monday = current_date.weekday()
+        week_start = current_date - timedelta(days=days_since_monday)
+        week_str = week_start.strftime("%Y-W%W")
+        
+        month_str = current_date.strftime("%Y-%m")
         
         # Get quick stats
         point_values = self.config.get('points', {})
@@ -158,6 +167,30 @@ class HTMLGenerator:
     <title>Total Battle - Clan Chest Tracker</title>
     <style>
         {self._get_css()}
+        .resources-button-container {{
+            width: 100%;
+            margin: 30px 0;
+        }}
+        .resources-button {{
+            display: block;
+            width: 100%;
+            background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+            color: #ffffff;
+            padding: 25px;
+            border-radius: 15px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 1.5em;
+            text-align: center;
+            border: 2px solid rgba(255,255,255,0.2);
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 25px rgba(255,107,53,0.3);
+        }}
+        .resources-button:hover {{
+            background: linear-gradient(135deg, #f7931e 0%, #ff6b35 100%);
+            transform: translateY(-3px);
+            box-shadow: 0 12px 35px rgba(255,107,53,0.5);
+        }}
         .report-card {{
             background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
             padding: 30px;
@@ -228,6 +261,12 @@ class HTMLGenerator:
                 <div class="stat-value">{sum(p['total_points'] for p in daily_stats.values()):,}</div>
                 <div class="stat-label">Points Today</div>
             </div>
+        </div>
+
+        <div class="resources-button-container">
+            <a href="resources.html" class="resources-button">
+                📚 Total Battle Information and Resources
+            </a>
         </div>
 
         <div class="report-card">
@@ -306,9 +345,12 @@ class HTMLGenerator:
         """Generate individual detail page for each member"""
         members = members_manager.get_all_members()
         
-        # Get last week's database path
-        last_week = datetime.now() - timedelta(weeks=1)
-        last_week_str = last_week.strftime("%Y-W%U")
+        # Get last week's database path using same method as database
+        current_date = datetime.now()
+        days_since_monday = current_date.weekday()
+        this_week_start = current_date - timedelta(days=days_since_monday)
+        last_week_start = this_week_start - timedelta(weeks=1)
+        last_week_str = last_week_start.strftime("%Y-W%W")
         last_weekly_db = self.db.db_dir / f"weekly_{last_week_str}.db"
         
         for member in members:
