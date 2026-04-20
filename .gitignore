@@ -2,6 +2,7 @@
 databases/
 html_reports/
 config.json
+resources.html
 *.db
 
 # Temporary files
