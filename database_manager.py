@@ -324,6 +324,9 @@ class DatabaseManager:
         cutoff_date = datetime.now() - timedelta(days=30)
         
         for db_file in self.db_dir.glob("*.db"):
+            # Never delete the members database
+            if db_file.name == "members.db":
+                continue
             # Get file modification time
             mtime = datetime.fromtimestamp(db_file.stat().st_mtime)
             

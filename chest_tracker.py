@@ -118,9 +118,9 @@ class CaptureThread(QThread):
                 self.status_update.emit("Running OCR...")
                 try:
                     # Save preprocessed image temporarily - predict() needs a file path
-                    temp_path = 'temp_ocr.png'
-                    cv2.imwrite(temp_path, gray)
-                    result = self.ocr.predict(input=temp_path)
+                    #temp_path = 'temp_ocr.png'
+                    #cv2.imwrite(temp_path, gray)
+                    result = self.ocr.predict(input=cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR))
                 except Exception as ocr_error:
                     self.status_update.emit(f"OCR error: {str(ocr_error)}")
                     import traceback
@@ -208,7 +208,7 @@ class CaptureThread(QThread):
         
         self.status_update.emit("Parsing chest data...")
         
-        chest_keywords = ['chest', 'crypt', 'vault']
+        chest_keywords = ['chest', 'crypt', 'vault', 'cauldron']
         
         i = 0
         while i < len(text_lines):
@@ -1139,7 +1139,7 @@ class MainWindow(QMainWindow):
                 enable_mkldnn=False,  # Disable OneDNN/MKLDNN
                 text_det_box_thresh=0.3,  # Updated parameter name
                 text_det_unclip_ratio=2.0,  # Updated parameter name
-                text_recognition_batch_size=6  # Updated parameter name
+                text_recognition_batch_size=1  # Updated parameter name
             )
             self.log("OCR model ready!")
         except Exception as e:
