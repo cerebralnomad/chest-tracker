@@ -608,6 +608,11 @@ class HTMLGenerator:
     
     def _generate_members_html(self, member_stats, sort_by, filename, title):
         """Generate a member report HTML file sorted by specified column"""
+        # Calculate current week string for chest types link
+        current_date = datetime.now()
+        days_since_monday = current_date.weekday()
+        week_start = current_date - timedelta(days=days_since_monday)
+
         # Sort member stats based on sort_by parameter
         if sort_by == 'daily':
             sorted_stats = sorted(member_stats, key=lambda x: x['daily_points'], reverse=True)
@@ -727,6 +732,20 @@ class HTMLGenerator:
             </div>
         </div>
 
+        <a href="chest_types_weekly_{week_start.strftime('%Y-W%W')}.html" style="
+            display: inline-block;
+            margin: 0 0 20px 0;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffd700;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 700;
+            border: 2px solid rgba(255,215,0,0.3);
+            transition: all 0.3s ease;">
+            📦 View This Week's Chest Type Summary →
+        </a>
+
         <table class="members-table">
             <thead>
                 <tr>
@@ -785,6 +804,224 @@ class HTMLGenerator:
         
         return str(filepath)
     
+    def generate_weekly_chest_types_report(self):
+        """Generate weekly chest type summary report (anonymous - no player names)"""
+        current_date = datetime.now()
+
+        days_since_monday = current_date.weekday()
+        week_start = current_date - timedelta(days=days_since_monday)
+        week_str = week_start.strftime("%Y-W%W")
+        filename = f"chest_types_weekly_{week_str}.html"
+
+        # Calculate previous and next week
+        prev_week_start = week_start - timedelta(weeks=1)
+        next_week_start = week_start + timedelta(weeks=1)
+        prev_week_str = prev_week_start.strftime("%Y-W%W")
+        next_week_str = next_week_start.strftime("%Y-W%W")
+
+        prev_report_exists = (self.output_dir / f"chest_types_weekly_{prev_week_str}.html").exists()
+        next_report_exists = (self.output_dir / f"chest_types_weekly_{next_week_str}.html").exists()
+
+        # Aggregate chest types across all players (no names)
+        stats = self.db.get_weekly_stats()
+        chest_type_totals = {}
+        for player_data in stats.values():
+            for chest_type, count in player_data['chest_types'].items():
+                chest_type_totals[chest_type] = chest_type_totals.get(chest_type, 0) + count
+
+        # Sort by count descending
+        sorted_chest_types = sorted(chest_type_totals.items(), key=lambda x: x[1], reverse=True)
+
+        html = self._create_chest_types_html(
+            title=f"Chest Types - Week {week_str}",
+            week_str=week_str,
+            sorted_chest_types=sorted_chest_types,
+            navigation={
+                'prev_link': f"chest_types_weekly_{prev_week_str}.html" if prev_report_exists else None,
+                'next_link': f"chest_types_weekly_{next_week_str}.html" if next_report_exists else None,
+                'prev_label': f"Week {prev_week_str}",
+                'next_label': f"Week {next_week_str}"
+            }
+        )
+
+        filepath = self.output_dir / filename
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(html)
+
+        return str(filepath)
+
+    def _create_chest_types_html(self, title, week_str, sorted_chest_types, navigation=None):
+        """Generate the chest types summary HTML page"""
+        total_chests = sum(count for _, count in sorted_chest_types)
+        unique_types = len(sorted_chest_types)
+        max_count = sorted_chest_types[0][1] if sorted_chest_types else 1
+
+        # Build table rows with proportional bar
+        rows_html = ""
+        if sorted_chest_types:
+            for chest_type, count in sorted_chest_types:
+                bar_pct = int((count / max_count) * 100)
+                rows_html += f"""
+                <tr class="chest-row">
+                    <td class="chest-name-cell">{chest_type}</td>
+                    <td class="bar-cell">
+                        <div class="bar-wrap">
+                            <div class="bar-fill" style="width:{bar_pct}%"></div>
+                        </div>
+                    </td>
+                    <td class="count-cell">{count:,}</td>
+                </tr>
+"""
+        else:
+            rows_html = """
+                <tr>
+                    <td colspan="3" style="text-align:center; padding:30px; color:#999;">
+                        No chest data for this week yet.
+                    </td>
+                </tr>
+"""
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>[ACE] {title}</title>
+    <style>
+        {self._get_css()}
+        .back-link {{
+            display: inline-block;
+            margin: 20px 0;
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffd700;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 700;
+            transition: all 0.3s ease;
+        }}
+        .back-link:hover {{
+            background: linear-gradient(135deg, #2a5298 0%, #3a72b8 100%);
+            transform: translateY(-2px);
+        }}
+        .chest-types-table {{
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
+            border-collapse: collapse;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+            overflow: hidden;
+        }}
+        .chest-types-table th {{
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffd700;
+            padding: 15px 20px;
+            text-align: left;
+            font-weight: 700;
+            border-bottom: 2px solid #ffd700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        .chest-types-table th:last-child {{
+            text-align: center;
+            width: 100px;
+        }}
+        .chest-row td {{
+            padding: 12px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            vertical-align: middle;
+        }}
+        .chest-row:hover {{
+            background: rgba(255,215,0,0.07);
+        }}
+        .chest-row:nth-child(even) {{
+            background: rgba(0,0,0,0.15);
+        }}
+        .chest-row:nth-child(even):hover {{
+            background: rgba(255,215,0,0.07);
+        }}
+        .chest-name-cell {{
+            color: #e4e4e4;
+            font-size: 1em;
+            font-weight: 500;
+            white-space: nowrap;
+            width: 280px;
+        }}
+        .bar-cell {{
+            padding-left: 15px;
+            padding-right: 15px;
+        }}
+        .bar-wrap {{
+            background: rgba(255,255,255,0.08);
+            border-radius: 4px;
+            height: 18px;
+            overflow: hidden;
+        }}
+        .bar-fill {{
+            height: 100%;
+            background: linear-gradient(90deg, #1e6b2a 0%, #4CAF50 100%);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            min-width: 2px;
+        }}
+        .count-cell {{
+            text-align: center;
+            font-weight: 700;
+            color: #ffd700;
+            font-size: 1.1em;
+            width: 80px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="background-pattern"></div>
+
+    <div class="container">
+        <header class="header">
+            <div class="title-section">
+                <h1 class="main-title">⚔️ TOTAL BATTLE</h1>
+                <h2 class="sub-title">[ACE] Weekly Chest Type Summary</h2>
+            </div>
+            <div class="navigation-container">
+                {self._generate_navigation_html(navigation, title)}
+            </div>
+            <div class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+        </header>
+
+        <a href="members_report.html" class="back-link">← Back to Members Report</a>
+
+        <div class="stats-overview">
+            <div class="stat-card">
+                <div class="stat-value">{total_chests:,}</div>
+                <div class="stat-label">Total Chests This Week</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{unique_types}</div>
+                <div class="stat-label">Unique Chest Types</div>
+            </div>
+        </div>
+
+        <table class="chest-types-table">
+            <thead>
+                <tr>
+                    <th>Chest Type</th>
+                    <th>Relative Volume</th>
+                    <th>Count</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+
+        <footer class="footer">
+            <p>[ACE] Clan Chest Tracker • For Leadership Use Only</p>
+        </footer>
+    </div>
+</body>
+</html>"""
+
     def generate_point_values_page(self):
         """Generate point values reference page for clan members"""
         point_values = self.config.get('points', {})

@@ -114,13 +114,14 @@ class CaptureThread(QThread):
                 # Quick contrast boost only
                 gray = cv2.convertScaleAbs(gray, alpha=1.3, beta=10)
                 
+                # PaddleX 3.4+ doc preprocessor requires 3-channel input (img.shape[2] must exist)
+                # Convert grayscale back to 3-channel RGB - all channels identical, OCR accuracy unchanged
+                gray_3ch = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+                
                 # Run OCR on preprocessed image
                 self.status_update.emit("Running OCR...")
                 try:
-                    # Save preprocessed image temporarily - predict() needs a file path
-                    #temp_path = 'temp_ocr.png'
-                    #cv2.imwrite(temp_path, gray)
-                    result = self.ocr.predict(input=cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR))
+                    result = self.ocr.predict(input=gray_3ch)
                 except Exception as ocr_error:
                     self.status_update.emit(f"OCR error: {str(ocr_error)}")
                     import traceback
@@ -208,7 +209,7 @@ class CaptureThread(QThread):
         
         self.status_update.emit("Parsing chest data...")
         
-        chest_keywords = ['chest', 'crypt', 'vault', 'cauldron']
+        chest_keywords = ['chest', 'crypt', 'vault']
         
         i = 0
         while i < len(text_lines):
@@ -1509,6 +1510,7 @@ class MainWindow(QMainWindow):
             generator.generate_point_values_page()
             generator.generate_index()
             generator.generate_members_report(self.members)
+            generator.generate_weekly_chest_types_report()
             generator.cleanup_old_reports()
             self.log("HTML reports updated successfully")
         except Exception as e:
