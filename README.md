@@ -178,20 +178,38 @@ The Members tab allows you to maintain a master list of all clan members:
    - Click "Sync from Databases"
    - Automatically adds anyone who has contributed chests
    - Shows count of new members found
+   - Will not re-add members who have been deliberately removed
 
 2. **Manual additions**:
    - Enter member name in text box
    - Click "Add Member"
    - Useful for new members who haven't contributed yet
+   - If adding someone who was previously removed, this clears them
+     from the blocklist so future Syncs will treat them normally
 
 3. **Remove members**:
    - Select member from list
    - Click "Remove Selected"
+   - Removed members are added to a blocklist so "Sync from Databases"
+     will not re-add them even if their chest records still exist
    - Note: This only removes from member list, not chest history
 
 4. **Member sources**:
    - "Auto (OCR)": Added automatically from chest processing
    - "Manual": Added manually by clan leadership
+
+5. **Managing the blocklist directly** (e.g. for members removed via
+   the command line before this feature existed):
+   ```bash
+   # Add someone to the blocklist manually
+   sqlite3 databases/members.db \
+     "INSERT OR REPLACE INTO removed_members (name, date_removed)
+      VALUES ('PlayerName', datetime('now'));"
+
+   # View the current blocklist
+   sqlite3 -column databases/members.db \
+     "SELECT name, date(date_removed) FROM removed_members ORDER BY name;"
+   ```
 
 ### HTML Reports
 
@@ -249,6 +267,8 @@ https://yoursubdomain.yourdomain.com/weekly_report_2024-W10.html
 - Stores member names and when they were added (manual vs auto)
 - Statistics calculated on-demand from daily/weekly/monthly databases
 - Syncs across computers via Syncthing
+- Also contains a `removed_members` blocklist — members removed via
+  the GUI are recorded here so "Sync from Databases" never re-adds them
 
 ### Auto-Cleanup
 - Chest databases older than 30 days are automatically deleted

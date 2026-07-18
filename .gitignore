@@ -4,6 +4,7 @@ html_reports/
 config.json
 resources.html
 *.db
+PROJECT_SUMMARY.md
 
 # Temporary files
 temp_ocr.png

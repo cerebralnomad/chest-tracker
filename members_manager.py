@@ -32,11 +32,18 @@ class MembersManager:
             )
         ''')
         
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS removed_members (
+                name TEXT PRIMARY KEY,
+                date_removed TEXT NOT NULL
+            )
+        ''')
+        
         conn.commit()
         conn.close()
     
     def add_member(self, name, added_by='manual'):
-        """Add a member to the list"""
+        """Add a member to the list, clearing blocklist entry if present"""
         if not name or not name.strip():
             return False
         
@@ -50,6 +57,12 @@ class MembersManager:
                 INSERT INTO members (name, date_added, added_by, is_active)
                 VALUES (?, ?, ?, 1)
             ''', (name, datetime.now().isoformat(), added_by))
+            
+            # If manually adding someone, remove from blocklist so they
+            # are treated as a current member going forward
+            if added_by == 'manual':
+                cursor.execute('DELETE FROM removed_members WHERE name = ?', (name,))
+            
             conn.commit()
             return True
         except sqlite3.IntegrityError:
@@ -59,12 +72,19 @@ class MembersManager:
             conn.close()
     
     def remove_member(self, name):
-        """Remove a member from the list"""
+        """Remove a member from the list and add to blocklist"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         cursor.execute('DELETE FROM members WHERE name = ?', (name,))
         deleted = cursor.rowcount > 0
+        
+        if deleted:
+            # Add to blocklist so Sync won't re-add them
+            cursor.execute('''
+                INSERT OR REPLACE INTO removed_members (name, date_removed)
+                VALUES (?, ?)
+            ''', (name, datetime.now().isoformat()))
         
         conn.commit()
         conn.close()
@@ -276,7 +296,7 @@ class MembersManager:
         return stats
     
     def sync_with_databases(self, daily_db, weekly_db, monthly_db):
-        """Auto-add any new members found in chest databases"""
+        """Auto-add any new members found in chest databases, respecting the blocklist"""
         new_members = []
         
         # Get unique player names from all databases
@@ -291,8 +311,17 @@ class MembersManager:
                 all_players.update(players)
                 conn.close()
         
-        # Add any new players to member list
+        # Load blocklist
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('SELECT name FROM removed_members')
+        blocklist = {row[0] for row in cursor.fetchall()}
+        conn.close()
+        
+        # Add any new players to member list, skipping blocklisted names
         for player in all_players:
+            if player in blocklist:
+                continue
             if not self.member_exists(player):
                 if self.add_member(player, added_by='auto'):
                     new_members.append(player)
