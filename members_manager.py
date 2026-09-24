@@ -91,6 +91,26 @@ class MembersManager:
         
         return deleted
     
+    def merge_member(self, old_name, new_name):
+        """Merge old_name into new_name: remove old_name from the member
+        list and add it to the blocklist (so sync_with_databases won't
+        silently re-add it once its chest rows have been renamed away),
+        while making sure new_name remains an active member."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('DELETE FROM members WHERE name = ?', (old_name,))
+        cursor.execute('''
+            INSERT OR REPLACE INTO removed_members (name, date_removed)
+            VALUES (?, ?)
+        ''', (old_name, datetime.now().isoformat()))
+
+        conn.commit()
+        conn.close()
+
+        if not self.member_exists(new_name):
+            self.add_member(new_name, added_by='merge')
+
     def get_all_members(self):
         """Get list of all members"""
         conn = sqlite3.connect(self.db_path)

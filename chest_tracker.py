@@ -32,6 +32,9 @@ from paddleocr import PaddleOCR
 from database_manager import DatabaseManager
 from html_generator import HTMLGenerator
 from members_manager import MembersManager
+from name_matching import resolve_player_name, pair_key
+from pending_review_store import PendingReviewStore
+from duplicate_review_dialog import DuplicateReviewDialog
 
 class CaptureThread(QThread):
     """Background thread for capturing and processing chests"""
@@ -39,8 +42,10 @@ class CaptureThread(QThread):
     chest_found = pyqtSignal(str, str)  # player_name, chest_type
     processing_complete = pyqtSignal(int)  # total chests processed
     error_occurred = pyqtSignal(str)
+    possible_duplicate = pyqtSignal(str, str)  # ocr_name, matched_existing_member
     
-    def __init__(self, coords, ocr_instance, db_manager, save_screenshots=False, click_coords=None):
+    def __init__(self, coords, ocr_instance, db_manager, save_screenshots=False,
+                 click_coords=None, known_members=None, ignored_pairs=None):
         super().__init__()
         self.coords = coords
         self.ocr = ocr_instance
@@ -50,6 +55,12 @@ class CaptureThread(QThread):
         self.save_screenshots = save_screenshots
         self.screenshot_counter = 0
         self.click_coords = click_coords  # (click_x, click_y) tuple
+        # Known member names, used to catch small OCR misspellings of
+        # existing players before they turn into a new "member".
+        self.known_members = known_members or []
+        # Name pairs the user has already confirmed are different real
+        # people, so they're never flagged again.
+        self.ignored_pairs = ignored_pairs or set()
         
         # Create screenshots directory if saving is enabled
         if self.save_screenshots:
@@ -293,6 +304,25 @@ class CaptureThread(QThread):
                         self.status_update.emit(f"Skipped: '{player_name}' (UI element)")
                         i += 1
                         continue
+                    
+                    # Compare against known members to catch small OCR slips.
+                    # Safe case/accent-only differences are corrected
+                    # automatically; anything else close enough to an
+                    # existing member is left as-is but flagged for review
+                    # rather than guessed at.
+                    resolved_name, flagged_match = resolve_player_name(
+                        player_name, self.known_members, self.ignored_pairs
+                    )
+                    if resolved_name != player_name:
+                        self.status_update.emit(
+                            f"Auto-corrected '{player_name}' -> '{resolved_name}' (case/accent match)"
+                        )
+                        player_name = resolved_name
+                    elif flagged_match:
+                        self.status_update.emit(
+                            f"Flagged for review: '{player_name}' looks similar to existing member '{flagged_match}'"
+                        )
+                        self.possible_duplicate.emit(player_name, flagged_match)
                     
                     # Valid chest found
                     chests.append({
@@ -844,6 +874,7 @@ class MainWindow(QMainWindow):
         self.config = ConfigManager()
         self.db = DatabaseManager()
         self.members = MembersManager()
+        self.pending_reviews = PendingReviewStore(self.db.db_dir)
         self.ocr = None
         self.capture_thread = None
         self.save_screenshots = save_screenshots
@@ -1169,18 +1200,23 @@ class MainWindow(QMainWindow):
             click_coords = (profile_coords['click_x'], profile_coords['click_y'])
         
         # Start capture thread
+        known_member_names = [m['name'] for m in self.members.get_all_members()]
+
         self.capture_thread = CaptureThread(
             self.coord_setup.coords,
             self.ocr,
             self.db,
             self.save_screenshots,
-            click_coords
+            click_coords,
+            known_members=known_member_names,
+            ignored_pairs=self.pending_reviews.get_ignored_pairs()
         )
         
         self.capture_thread.status_update.connect(self.log)
         self.capture_thread.chest_found.connect(self.on_chest_found)
         self.capture_thread.processing_complete.connect(self.on_processing_complete)
         self.capture_thread.error_occurred.connect(self.on_error)
+        self.capture_thread.possible_duplicate.connect(self.on_possible_duplicate)
         
         # Set delay
         self.capture_thread.click_delay = self.delay_spin.value() / 1000.0
@@ -1217,7 +1253,49 @@ class MainWindow(QMainWindow):
         )
         
         self.refresh_stats()
-    
+
+        # If any names were flagged as possible OCR duplicates during this
+        # run, ask about them right away while it's fresh. If nothing was
+        # flagged, this does nothing and no dialog appears.
+        self._review_pending_duplicates()
+
+    def on_possible_duplicate(self, new_name, matched_name):
+        """A name parsed during capture looked like a close, unconfirmed
+        match to an existing member. Record it for review; the actual
+        dialog is shown from on_processing_complete (and, as a safety net,
+        from closeEvent if it's still unresolved)."""
+        self.pending_reviews.add_pending(new_name, matched_name)
+
+    def _review_pending_duplicates(self):
+        """Show the duplicate-name review dialog if anything is pending.
+        Does nothing if the pending list is empty."""
+        pending = self.pending_reviews.get_pending()
+        if not pending:
+            return
+
+        dialog = DuplicateReviewDialog(
+            pending,
+            on_merge=self._merge_duplicate,
+            on_keep_separate=self._keep_separate_duplicate,
+            parent=self
+        )
+        dialog.exec()
+
+    def _merge_duplicate(self, new_name, matched_name):
+        """Fold new_name's chest history into matched_name and drop
+        new_name as a separate member going forward."""
+        self.db.rename_player(new_name, matched_name)
+        self.members.merge_member(new_name, matched_name)
+        self.pending_reviews.resolve(pair_key(new_name, matched_name), keep_separate=False)
+        self.log(f"Merged '{new_name}' into '{matched_name}'")
+        self.refresh_stats()
+
+    def _keep_separate_duplicate(self, pk):
+        """Dismiss a flag and remember the pair so it's never raised
+        again."""
+        self.pending_reviews.resolve(pk, keep_separate=True)
+        self.log("Marked names as different people; won't be flagged again")
+
     def on_error(self, error_msg):
         """Handle error"""
         self.log(f"ERROR: {error_msg}")
@@ -1474,6 +1552,25 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close"""
+        # Safety net: if any possible-duplicate flags are still unresolved
+        # (e.g. dismissed earlier with "Decide Later"), give one more
+        # chance to resolve them before the reports get regenerated. A
+        # normal close with nothing flagged is unaffected by any of this.
+        if self.pending_reviews.has_pending():
+            self._review_pending_duplicates()
+            if self.pending_reviews.has_pending():
+                QMessageBox.information(
+                    self,
+                    "Unresolved Possible Duplicates",
+                    "There are still flagged possible-duplicate names waiting "
+                    "on a decision. You can close that dialog with "
+                    "'Decide Later' as many times as you like, but the app "
+                    "will keep asking on close until each one is Merged or "
+                    "marked Keep Separate."
+                )
+                event.ignore()
+                return
+
         # Save current coordinates to active profile
         if self.coord_setup.coords:
             active_profile = self.config.get_active_profile()

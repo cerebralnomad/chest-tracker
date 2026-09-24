@@ -822,20 +822,27 @@ class HTMLGenerator:
         prev_report_exists = (self.output_dir / f"chest_types_weekly_{prev_week_str}.html").exists()
         next_report_exists = (self.output_dir / f"chest_types_weekly_{next_week_str}.html").exists()
 
-        # Aggregate chest types across all players (no names)
+        # Aggregate chest types across all players, and track per-member contributions
         stats = self.db.get_weekly_stats()
         chest_type_totals = {}
-        for player_data in stats.values():
+        chest_type_members = {}
+        for player_name, player_data in stats.items():
             for chest_type, count in player_data['chest_types'].items():
                 chest_type_totals[chest_type] = chest_type_totals.get(chest_type, 0) + count
+                chest_type_members.setdefault(chest_type, []).append((player_name, count))
 
         # Sort by count descending
         sorted_chest_types = sorted(chest_type_totals.items(), key=lambda x: x[1], reverse=True)
+
+        # Sort each chest type's member list by count descending too
+        for chest_type in chest_type_members:
+            chest_type_members[chest_type].sort(key=lambda x: x[1], reverse=True)
 
         html = self._create_chest_types_html(
             title=f"Chest Types - Week {week_str}",
             week_str=week_str,
             sorted_chest_types=sorted_chest_types,
+            chest_type_members=chest_type_members,
             navigation={
                 'prev_link': f"chest_types_weekly_{prev_week_str}.html" if prev_report_exists else None,
                 'next_link': f"chest_types_weekly_{next_week_str}.html" if next_report_exists else None,
@@ -850,35 +857,60 @@ class HTMLGenerator:
 
         return str(filepath)
 
-    def _create_chest_types_html(self, title, week_str, sorted_chest_types, navigation=None):
+    def _create_chest_types_html(self, title, week_str, sorted_chest_types, chest_type_members=None, navigation=None):
         """Generate the chest types summary HTML page"""
+        chest_type_members = chest_type_members or {}
         total_chests = sum(count for _, count in sorted_chest_types)
         unique_types = len(sorted_chest_types)
         max_count = sorted_chest_types[0][1] if sorted_chest_types else 1
 
-        # Build table rows with proportional bar
+        # Build expandable rows (each a <details> element styled as a table row)
         rows_html = ""
         if sorted_chest_types:
             for chest_type, count in sorted_chest_types:
                 bar_pct = int((count / max_count) * 100)
-                rows_html += f"""
-                <tr class="chest-row">
-                    <td class="chest-name-cell">{chest_type}</td>
-                    <td class="bar-cell">
-                        <div class="bar-wrap">
-                            <div class="bar-fill" style="width:{bar_pct}%"></div>
+                members = chest_type_members.get(chest_type, [])
+                member_max = members[0][1] if members else 1
+
+                members_html = ""
+                for member_name, member_count in members:
+                    member_bar_pct = int((member_count / member_max) * 100)
+                    members_html += f"""
+                        <div class="member-row">
+                            <span class="member-name-cell">{member_name}</span>
+                            <div class="member-bar-cell">
+                                <div class="bar-wrap member-bar-wrap">
+                                    <div class="bar-fill member-bar-fill" style="width:{member_bar_pct}%"></div>
+                                </div>
+                            </div>
+                            <span class="member-count-cell">{member_count:,}</span>
                         </div>
-                    </td>
-                    <td class="count-cell">{count:,}</td>
-                </tr>
+"""
+                if not members_html:
+                    members_html = '<div class="no-members">No contributor data available.</div>'
+
+                rows_html += f"""
+                <details class="chest-row">
+                    <summary class="chest-summary">
+                        <span class="chest-name-cell">{chest_type}</span>
+                        <span class="bar-cell">
+                            <div class="bar-wrap">
+                                <div class="bar-fill" style="width:{bar_pct}%"></div>
+                            </div>
+                        </span>
+                        <span class="count-cell">{count:,}</span>
+                        <span class="expand-arrow">▸</span>
+                    </summary>
+                    <div class="member-breakdown">
+                        {members_html}
+                    </div>
+                </details>
 """
         else:
             rows_html = """
-                <tr>
-                    <td colspan="3" style="text-align:center; padding:30px; color:#999;">
-                        No chest data for this week yet.
-                    </td>
-                </tr>
+                <div style="text-align:center; padding:30px; color:#999;">
+                    No chest data for this week yet.
+                </div>
 """
 
         return f"""<!DOCTYPE html>
@@ -908,37 +940,48 @@ class HTMLGenerator:
             width: 100%;
             max-width: 900px;
             margin: 0 auto;
-            border-collapse: collapse;
             background: rgba(255,255,255,0.05);
             border-radius: 10px;
             overflow: hidden;
         }}
-        .chest-types-table th {{
+        .chest-types-header-row {{
+            display: grid;
+            grid-template-columns: 280px 1fr 80px 30px;
+            align-items: center;
+            width: 100%;
+            max-width: 900px;
+            margin: 0 auto;
             background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
             color: #ffd700;
             padding: 15px 20px;
-            text-align: left;
             font-weight: 700;
             border-bottom: 2px solid #ffd700;
             text-transform: uppercase;
             letter-spacing: 1px;
+            border-radius: 10px 10px 0 0;
         }}
-        .chest-types-table th:last-child {{
+        .chest-types-header-row .count-cell {{
             text-align: center;
-            width: 100px;
         }}
-        .chest-row td {{
-            padding: 12px 20px;
+        .chest-row {{
+            display: block;
             border-bottom: 1px solid rgba(255,255,255,0.08);
-            vertical-align: middle;
-        }}
-        .chest-row:hover {{
-            background: rgba(255,215,0,0.07);
         }}
         .chest-row:nth-child(even) {{
             background: rgba(0,0,0,0.15);
         }}
-        .chest-row:nth-child(even):hover {{
+        .chest-summary {{
+            display: grid;
+            grid-template-columns: 280px 1fr 80px 30px;
+            align-items: center;
+            padding: 12px 20px;
+            cursor: pointer;
+            list-style: none;
+        }}
+        .chest-summary::-webkit-details-marker {{
+            display: none;
+        }}
+        .chest-row:hover > .chest-summary {{
             background: rgba(255,215,0,0.07);
         }}
         .chest-name-cell {{
@@ -946,7 +989,6 @@ class HTMLGenerator:
             font-size: 1em;
             font-weight: 500;
             white-space: nowrap;
-            width: 280px;
         }}
         .bar-cell {{
             padding-left: 15px;
@@ -970,7 +1012,116 @@ class HTMLGenerator:
             font-weight: 700;
             color: #ffd700;
             font-size: 1.1em;
-            width: 80px;
+        }}
+        .expand-arrow {{
+            text-align: center;
+            color: #ffd700;
+            transition: transform 0.2s ease;
+        }}
+        .chest-row[open] .expand-arrow {{
+            transform: rotate(90deg);
+        }}
+        .member-breakdown {{
+            padding: 6px 20px 16px 20px;
+            background: rgba(0,0,0,0.2);
+        }}
+        .member-row {{
+            display: grid;
+            grid-template-columns: 280px 1fr 80px;
+            align-items: center;
+            padding: 6px 0 6px 20px;
+        }}
+        .member-name-cell {{
+            color: #cfcfcf;
+            font-size: 0.92em;
+        }}
+        .member-bar-cell {{
+            padding-left: 15px;
+            padding-right: 15px;
+        }}
+        .member-bar-wrap {{
+            height: 12px;
+        }}
+        .member-bar-fill {{
+            background: linear-gradient(90deg, #7a5c00 0%, #ffd700 100%);
+        }}
+        .member-count-cell {{
+            text-align: center;
+            font-weight: 600;
+            color: #e4e4e4;
+            font-size: 0.95em;
+        }}
+        .no-members {{
+            padding: 6px 0 6px 20px;
+            color: #999;
+            font-style: italic;
+            font-size: 0.9em;
+        }}
+        .expand-hint {{
+            text-align: center;
+            color: #999;
+            font-size: 0.85em;
+            margin-top: 12px;
+            font-style: italic;
+        }}
+
+        @media (max-width: 640px) {{
+            .chest-types-header-row,
+            .chest-summary {{
+                grid-template-columns: 1fr auto auto;
+                grid-template-areas:
+                    "name count arrow"
+                    "bar bar bar";
+                row-gap: 8px;
+                padding: 12px 14px;
+            }}
+            .chest-types-header-row .expand-arrow-spacer {{
+                grid-area: arrow;
+            }}
+            .chest-name-cell {{
+                grid-area: name;
+                white-space: normal;
+                overflow-wrap: anywhere;
+                padding-right: 8px;
+            }}
+            .bar-cell {{
+                grid-area: bar;
+                padding: 0;
+            }}
+            .count-cell {{
+                grid-area: count;
+                text-align: right;
+            }}
+            .expand-arrow {{
+                grid-area: arrow;
+            }}
+            .member-breakdown {{
+                padding: 6px 12px 14px 12px;
+            }}
+            .member-row {{
+                grid-template-columns: 1fr auto;
+                grid-template-areas:
+                    "name count"
+                    "bar bar";
+                row-gap: 4px;
+                padding: 8px 0;
+            }}
+            .member-name-cell {{
+                grid-area: name;
+                overflow-wrap: anywhere;
+                padding-right: 8px;
+            }}
+            .member-bar-cell {{
+                grid-area: bar;
+                padding: 0;
+            }}
+            .member-count-cell {{
+                grid-area: count;
+                text-align: right;
+            }}
+            .no-members {{
+                padding: 6px 12px;
+            }}
         }}
     </style>
 </head>
@@ -1002,18 +1153,16 @@ class HTMLGenerator:
             </div>
         </div>
 
-        <table class="chest-types-table">
-            <thead>
-                <tr>
-                    <th>Chest Type</th>
-                    <th>Relative Volume</th>
-                    <th>Count</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows_html}
-            </tbody>
-        </table>
+        <div class="chest-types-header-row">
+            <span class="chest-name-cell">Chest Type</span>
+            <span class="bar-cell">Relative Volume</span>
+            <span class="count-cell">Count</span>
+            <span class="expand-arrow-spacer"></span>
+        </div>
+        <div class="chest-types-table">
+            {rows_html}
+        </div>
+        <p class="expand-hint">Click a chest type to see who contributed it.</p>
 
         <footer class="footer">
             <p>[ACE] Clan Chest Tracker • For Leadership Use Only</p>

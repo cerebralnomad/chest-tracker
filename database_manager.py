@@ -100,6 +100,35 @@ class DatabaseManager:
         self._update_summary(self.weekly_db, player_name)
         self._update_summary(self.monthly_db, player_name)
     
+    def rename_player(self, old_name, new_name):
+        """Rename a player across all current-period databases (daily,
+        weekly, monthly). Used to merge an OCR-misspelled duplicate into an
+        existing member's history.
+
+        Note: like the rest of this class, this only touches the *current*
+        daily/weekly/monthly databases - the same scope add_chest() and the
+        stats methods already use - not older rolled-over database files.
+        """
+        for db_path in [self.daily_db, self.weekly_db, self.monthly_db]:
+            if not db_path.exists():
+                continue
+
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                UPDATE chests SET player_name = ? WHERE player_name = ?
+            ''', (new_name, old_name))
+
+            # Drop the old summary row; it gets rebuilt (merged into
+            # new_name's totals) by _update_summary below.
+            cursor.execute('DELETE FROM player_summary WHERE player_name = ?', (old_name,))
+
+            conn.commit()
+            conn.close()
+
+            self._update_summary(db_path, new_name)
+
     def _add_to_db(self, db_path, player_name, chest_type, timestamp):
         """Add a chest entry to a specific database"""
         conn = sqlite3.connect(db_path)
@@ -324,9 +353,6 @@ class DatabaseManager:
         cutoff_date = datetime.now() - timedelta(days=30)
         
         for db_file in self.db_dir.glob("*.db"):
-            # Never delete the members database
-            if db_file.name == "members.db":
-                continue
             # Get file modification time
             mtime = datetime.fromtimestamp(db_file.stat().st_mtime)
             
