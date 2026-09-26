@@ -14,11 +14,17 @@ from PyQt6.QtWidgets import (
 
 class DuplicateReviewDialog(QDialog):
     """
-    Presents each flagged (new_name, matched_name) pair with two choices:
+    Presents each flagged (new_name, matched_name) pair with three choices:
 
-      - "Merge into <matched_name>": folds new_name's chest history into
+      - "Keep '<matched_name>'": folds new_name's chest history into
         matched_name and removes new_name as a separate member going
-        forward. Use only when you're sure it's the same person.
+        forward.
+
+      - "Keep '<new_name>'": the reverse - folds matched_name's chest
+        history into new_name and removes matched_name instead. Which name
+        is "new" vs "matched" just reflects which one happened to already
+        be a known member when this was flagged, NOT which spelling is
+        actually correct - so both directions are offered every time.
 
       - "Keep Separate": dismisses this flag and remembers the pair so it
         is never raised again.
@@ -27,7 +33,7 @@ class DuplicateReviewDialog(QDialog):
     leaves that row pending for next time - it is NOT treated as either
     decision.
 
-    `on_merge(new_name, matched_name)` and `on_keep_separate(pair_key)` are
+    `on_merge(drop_name, keep_name)` and `on_keep_separate(pair_key)` are
     callables supplied by the caller that actually perform the action and
     update the pending-review store.
     """
@@ -79,15 +85,18 @@ class DuplicateReviewDialog(QDialog):
 
         label = QLabel(
             f"'<b>{item['new_name']}</b>' looks similar to existing member "
-            f"'<b>{item['matched_name']}</b>'"
+            f"'<b>{item['matched_name']}</b>'. If they're the same person, "
+            f"pick which spelling to keep:"
         )
         label.setWordWrap(True)
         row_layout.addWidget(label)
 
         btn_row = QHBoxLayout()
-        merge_btn = QPushButton(f"Merge into '{item['matched_name']}'")
+        keep_matched_btn = QPushButton(f"Keep '{item['matched_name']}'")
+        keep_new_btn = QPushButton(f"Keep '{item['new_name']}'")
         keep_btn = QPushButton("Keep Separate")
-        btn_row.addWidget(merge_btn)
+        btn_row.addWidget(keep_matched_btn)
+        btn_row.addWidget(keep_new_btn)
         btn_row.addWidget(keep_btn)
         row_layout.addLayout(btn_row)
 
@@ -95,11 +104,18 @@ class DuplicateReviewDialog(QDialog):
         self.content_layout.addWidget(frame)
         self._frames[item['pair_key']] = frame
 
-        merge_btn.clicked.connect(lambda _, i=item: self._handle_merge(i))
+        # Keep matched_name -> drop (merge away) new_name
+        keep_matched_btn.clicked.connect(
+            lambda _, i=item: self._handle_merge(i, drop_name=i['new_name'], keep_name=i['matched_name'])
+        )
+        # Keep new_name -> drop (merge away) matched_name
+        keep_new_btn.clicked.connect(
+            lambda _, i=item: self._handle_merge(i, drop_name=i['matched_name'], keep_name=i['new_name'])
+        )
         keep_btn.clicked.connect(lambda _, i=item: self._handle_keep_separate(i))
 
-    def _handle_merge(self, item):
-        self._on_merge(item['new_name'], item['matched_name'])
+    def _handle_merge(self, item, drop_name, keep_name):
+        self._on_merge(drop_name, keep_name)
         self._remove_row(item)
 
     def _handle_keep_separate(self, item):

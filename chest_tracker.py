@@ -1281,13 +1281,15 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
-    def _merge_duplicate(self, new_name, matched_name):
-        """Fold new_name's chest history into matched_name and drop
-        new_name as a separate member going forward."""
-        self.db.rename_player(new_name, matched_name)
-        self.members.merge_member(new_name, matched_name)
-        self.pending_reviews.resolve(pair_key(new_name, matched_name), keep_separate=False)
-        self.log(f"Merged '{new_name}' into '{matched_name}'")
+    def _merge_duplicate(self, drop_name, keep_name):
+        """Fold drop_name's chest history into keep_name and remove
+        drop_name as a separate member going forward. Which name is
+        dropped vs kept is the user's choice from the review dialog -
+        it does not have to be the freshly-OCR'd one."""
+        self.db.rename_player(drop_name, keep_name)
+        self.members.merge_member(drop_name, keep_name)
+        self.pending_reviews.resolve(pair_key(drop_name, keep_name), keep_separate=False)
+        self.log(f"Merged '{drop_name}' into '{keep_name}'")
         self.refresh_stats()
 
     def _keep_separate_duplicate(self, pk):
