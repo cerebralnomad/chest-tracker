@@ -59,7 +59,7 @@ def find_fold_match(name, known_members):
     return None
 
 
-def find_fuzzy_candidates(name, known_members, ratio_threshold=0.90, max_len_diff=1):
+def find_fuzzy_candidates(name, known_members, ratio_threshold=0.85, max_len_diff=2):
     """Tier 2: existing members close enough to `name` to be worth a human's
     attention. Excludes anything that's actually a fold match (Tier 1
     handles those). Returns a list of (member_name, ratio), most similar

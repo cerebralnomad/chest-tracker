@@ -1200,6 +1200,17 @@ class MainWindow(QMainWindow):
             click_coords = (profile_coords['click_x'], profile_coords['click_y'])
         
         # Start capture thread
+        # Refresh the member list from chest history first, so duplicate
+        # detection compares against everyone already seen (not just
+        # whoever was in members.db the last time "Sync Members" was
+        # clicked by hand). This is the same sync_with_databases() the
+        # Sync Members button already runs - just run automatically here
+        # so freshly-seen names aren't missed as comparison targets.
+        self.members.sync_with_databases(
+            self.db.daily_db,
+            self.db.weekly_db,
+            self.db.monthly_db
+        )
         known_member_names = [m['name'] for m in self.members.get_all_members()]
 
         self.capture_thread = CaptureThread(
@@ -1531,7 +1542,7 @@ class MainWindow(QMainWindow):
             if report_type == 'daily':
                 filepath = generator.generate_daily_report()
             elif report_type == 'weekly':
-                filepath = generator.generate_weekly_report()
+                filepath = generator.generate_weekly_report(self.members)
             else:
                 filepath = generator.generate_monthly_report()
             
@@ -1604,7 +1615,7 @@ class MainWindow(QMainWindow):
             self.log("Generating HTML reports...")
             generator = HTMLGenerator(self.db, self.config)
             generator.generate_daily_report()
-            generator.generate_weekly_report()
+            generator.generate_weekly_report(self.members)
             generator.generate_monthly_report()
             generator.generate_point_values_page()
             generator.generate_index()

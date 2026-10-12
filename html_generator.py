@@ -58,8 +58,16 @@ class HTMLGenerator:
         
         return str(filepath)
     
-    def generate_weekly_report(self):
-        """Generate weekly HTML report"""
+    def generate_weekly_report(self, members_manager=None):
+        """Generate weekly HTML report.
+
+        If members_manager is provided, every current member appears in
+        the report even if they earned zero chests this week - otherwise
+        a member who contributed nothing at all is simply absent (since
+        they never got a row in the weekly database), which makes earning
+        zero indistinguishable from not being a member, and harder to spot
+        than falling just short of a requirement.
+        """
         current_date = datetime.now()
         
         # Calculate week string using same method as database (Monday as first day)
@@ -81,7 +89,17 @@ class HTMLGenerator:
         
         point_values = self.config.get('points', {})
         stats = self.db.get_detailed_stats(self.db.weekly_db, point_values)
-        
+
+        if members_manager is not None:
+            for member in members_manager.get_all_members():
+                name = member['name']
+                if name not in stats:
+                    stats[name] = {
+                        'total_chests': 0,
+                        'chest_types': {},
+                        'total_points': 0
+                    }
+
         html = self._create_html(
             title=f"Weekly Report - Week {week_str}",
             stats=stats,
@@ -1063,65 +1081,6 @@ class HTMLGenerator:
             font-size: 0.85em;
             margin-top: 12px;
             font-style: italic;
-        }}
-
-        @media (max-width: 640px) {{
-            .chest-types-header-row,
-            .chest-summary {{
-                grid-template-columns: 1fr auto auto;
-                grid-template-areas:
-                    "name count arrow"
-                    "bar bar bar";
-                row-gap: 8px;
-                padding: 12px 14px;
-            }}
-            .chest-types-header-row .expand-arrow-spacer {{
-                grid-area: arrow;
-            }}
-            .chest-name-cell {{
-                grid-area: name;
-                white-space: normal;
-                overflow-wrap: anywhere;
-                padding-right: 8px;
-            }}
-            .bar-cell {{
-                grid-area: bar;
-                padding: 0;
-            }}
-            .count-cell {{
-                grid-area: count;
-                text-align: right;
-            }}
-            .expand-arrow {{
-                grid-area: arrow;
-            }}
-            .member-breakdown {{
-                padding: 6px 12px 14px 12px;
-            }}
-            .member-row {{
-                grid-template-columns: 1fr auto;
-                grid-template-areas:
-                    "name count"
-                    "bar bar";
-                row-gap: 4px;
-                padding: 8px 0;
-            }}
-            .member-name-cell {{
-                grid-area: name;
-                overflow-wrap: anywhere;
-                padding-right: 8px;
-            }}
-            .member-bar-cell {{
-                grid-area: bar;
-                padding: 0;
-            }}
-            .member-count-cell {{
-                grid-area: count;
-                text-align: right;
-            }}
-            .no-members {{
-                padding: 6px 12px;
-            }}
         }}
     </style>
 </head>
