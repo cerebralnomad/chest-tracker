@@ -282,7 +282,7 @@ class CaptureThread(QThread):
                     player_lower = player_name.lower()
                     
                     # Skip if player name contains chest keywords
-                    if any(kw in player_lower for kw in ['level', 'crypt', 'chest', 'vault', 'source']):
+                    if any(kw in player_lower for kw in ['level', 'crypt', 'vault', 'source']):
                         self.status_update.emit(f"Skipped: '{player_name}' (contains keyword)")
                         i += 1
                         continue
